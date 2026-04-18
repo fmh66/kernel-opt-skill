@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "updated_at": "2026-04-18T08:19:19",
+  "scopes": {
+    "cuda__src_7eafbef4c03a__ref__auto_arch__e7330c3abb52": {
+      "meta": {
+        "backend": "cuda",
+        "source_file": "/home/kernel-opter-skill/test/test.cu",
+        "reference_file": "/home/kernel-opter-skill/test/ref.py",
+        "dims_args": [
+          "--N=1024",
+          "--D=2048"
+        ],
+        "arch": ""
+      },
+      "positive": {},
+      "negative": {},
+      "rejected": {
+        "40f2b8f0ca5ba355": {
+          "tags": [
+            "baseline"
+          ],
+          "first_iteration": 0,
+          "last_iteration": 1,
+          "count": 2,
+          "last_outcome": "rejected",
+          "last_reason": "targeted_ncu_failed;blocked_strategy_reused",
+          "evidence": {
+            "baseline_iteration": 0,
+            "baseline_median_ms": null,
+            "current_median_ms": 0.04167680144309997
+          }
+        }
+      }
+    }
+  }
+}
