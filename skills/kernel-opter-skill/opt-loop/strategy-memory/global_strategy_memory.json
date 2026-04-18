@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-04-18T08:19:19",
+  "updated_at": "2026-04-18T12:13:40",
   "scopes": {
     "cuda__src_7eafbef4c03a__ref__auto_arch__e7330c3abb52": {
       "meta": {
@@ -32,6 +32,55 @@
           }
         }
       }
+    },
+    "cuda__src_7eafbef4c03a__no_ref__auto_arch__3473a740cbc6": {
+      "meta": {
+        "backend": "cuda",
+        "source_file": "/home/kernel-opter-skill/test/test.cu",
+        "reference_file": "",
+        "dims_args": [
+          "--N=4096",
+          "--D=1024"
+        ],
+        "arch": ""
+      },
+      "positive": {
+        "40f2b8f0ca5ba355": {
+          "tags": [
+            "baseline"
+          ],
+          "first_iteration": 0,
+          "last_iteration": 3,
+          "count": 3,
+          "last_outcome": "positive",
+          "last_reason": "faster_than_previous",
+          "evidence": {
+            "baseline_iteration": 2,
+            "baseline_median_ms": 0.05953600189902566,
+            "current_median_ms": 0.059156363660638984
+          }
+        }
+      },
+      "negative": {
+        "d240ce829d743872": {
+          "tags": [
+            "float4_vectorized_loads",
+            "online_softmax",
+            "warp_shuffle_reduction"
+          ],
+          "first_iteration": 1,
+          "last_iteration": 1,
+          "count": 2,
+          "last_outcome": "negative",
+          "last_reason": "slower_or_equal_to_previous",
+          "evidence": {
+            "baseline_iteration": 0,
+            "baseline_median_ms": 0.05995054678483443,
+            "current_median_ms": 0.061207272789695046
+          }
+        }
+      },
+      "rejected": {}
     }
   }
 }

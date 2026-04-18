@@ -12,6 +12,18 @@ nvcc --version 2>&1 | grep "release" || echo "❌ nvcc 未找到"
 nvidia-smi --query-gpu=name,compute_cap,memory.total,clocks.max.sm,clocks.max.mem \
     --format=csv,noheader 2>&1 || echo "❌ nvidia-smi 未找到"
 ncu --version 2>&1 | head -1 || echo "❌ ncu 未找到"
+python3 - <<'EOF'
+import sys
+try:
+    import torch
+    print(f"✅ PyTorch {torch.__version__}  CUDA available={torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"   GPU: {torch.cuda.get_device_name(0)}  "
+              f"compute_cap={torch.cuda.get_device_capability(0)}")
+except ImportError:
+    print("❌ PyTorch 未找到")
+    sys.exit(1)
+EOF
 ```
 
 任意一项不通过，**立即停止**，先修环境。
@@ -47,6 +59,7 @@ flowchart TD
 | `profiling/SKILL.md` | 测量（benchmark + NCU 采集）+ 解读（指标分析 + 瓶颈定位） |
 | `cuda/SKILL.md` | 优化（按瓶颈类型给出实施策略） |
 | `opt-loop/SKILL.md` | 自动化多轮迭代 + 策略记忆 + best 选择 |
+| `report/SKILL.md` | 生成优化流程报告，将 Step 0–6 各环节决策结构化输出 |
 
 ---
 

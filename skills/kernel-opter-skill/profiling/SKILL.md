@@ -54,8 +54,8 @@ ncu \
     --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Chart \
     --section MemoryWorkloadAnalysis_Tables \
     --section ComputeWorkloadAnalysis \
-    --section Occupancy --section LaunchStatistics \
-    --section SchedulerStatistics --section WarpStateStatistics \
+    --section Occupancy --section LaunchStats \
+    --section SchedulerStats --section WarpStateStats \
     -o <out> -f \
     python skills/kernel-opter-skill/profiling/script/benchmark.py <kernel.cu> \
     --M=1024 --N=1024 --repeat=22 --skip-compile
@@ -74,6 +74,8 @@ ncu \
 ```
 
 最终交付必须附 full 证据；targeted 只作初步定位。
+
+> **数据量建议**：单一数据量的 NCU 结果可能受边界效应影响（如 warp 数量恰好整除、L2 完全命中等），结论不够可靠。建议对同一 kernel **至少用 3 个数据量级**（每次 ×10，如 `--ptr-size=1024`、`10240`、`102400`）分别采集 full profile，若三者瓶颈分类一致则结论可信；若出现分歧，以**最大规模**为准（小数据量更易受 launch overhead 和 cache 暖机干扰）。
 
 ---
 
