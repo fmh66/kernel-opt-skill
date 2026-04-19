@@ -2,3 +2,4 @@
 test
 .claude
 .venv
+__pycache__

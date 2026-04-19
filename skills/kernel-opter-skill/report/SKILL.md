@@ -1,6 +1,6 @@
 ---
 name: kernel-opter-report
-description: Generate a structured CUDA kernel optimization report. Invoke after each optimization round to surface per-step decisions, NCU metrics, and conclusions for Step 0–6 as a Markdown document.
+description: Generate a structured CUDA kernel optimization report. Invoke after each optimization round to surface per-step decisions, NCU metrics, and conclusions for a Markdown document.
 ---
 
 # kernel-opter-report
@@ -36,20 +36,7 @@ description: Generate a structured CUDA kernel optimization report. Invoke after
 
 ---
 
-## Step 0 · 基线采集
-
-| 指标 | 值 |
-|---|---|
-| 执行时间 (ms) | |
-| 吞吐量 (TFLOPS / GB/s) | |
-| NCU 采集命令 | `ncu --set full -o baseline ...` |
-
-**决策：** 基线数据是否可重复？若 CV > 5% 需先固定频率再继续。
-→ _<必填：结论>_
-
----
-
-## Step 1 · 全局定位（瓶颈类型）
+## 全局定位（瓶颈类型）
 
 | NCU 指标 | 值 | 阈值 | 判断 |
 |---|---|---|---|
@@ -63,11 +50,11 @@ description: Generate a structured CUDA kernel optimization report. Invoke after
 
 ---
 
-## Step 2 · 针对性优化
+## 针对性优化
 
 > 根据 Step 1 结论，仅填写对应分支，其余分支可删除。
 
-### 2a · Memory-Bound（内存访问优化）
+### Memory-Bound（内存访问优化）
 
 | 策略 | 是否采用 | 理由 |
 |---|---|---|
@@ -80,7 +67,7 @@ description: Generate a structured CUDA kernel optimization report. Invoke after
 **决策：** 本轮选择的策略组合及预期收益。
 → _<必填>_
 
-### 2b · Compute-Bound（计算效率优化）
+### Compute-Bound（计算效率优化）
 
 | 策略 | 是否采用 | 理由 |
 |---|---|---|
@@ -92,7 +79,7 @@ description: Generate a structured CUDA kernel optimization report. Invoke after
 **决策：** 本轮选择的策略组合及预期收益。
 → _<必填>_
 
-### 2c · Latency-Bound（并行度优化）
+### Latency-Bound（并行度优化）
 
 | 策略 | 是否采用 | 理由 |
 |---|---|---|
@@ -106,7 +93,7 @@ description: Generate a structured CUDA kernel optimization report. Invoke after
 
 ---
 
-## Step 3 · 占用率分析
+## 占用率分析
 
 | 指标 | 值 | 目标 |
 |---|---|---|
@@ -121,7 +108,7 @@ description: Generate a structured CUDA kernel optimization report. Invoke after
 
 ---
 
-## Step 4 · Warp 调度分析
+## Warp 调度分析
 
 | NCU 指标 | 值 | 解读 |
 |---|---|---|
@@ -135,7 +122,7 @@ description: Generate a structured CUDA kernel optimization report. Invoke after
 
 ---
 
-## Step 5 · 分支发散分析
+## 分支发散分析
 
 | NCU 指标 | 值 | 阈值 |
 |---|---|---|
@@ -147,7 +134,7 @@ description: Generate a structured CUDA kernel optimization report. Invoke after
 
 ---
 
-## Step 6 · 结果对比
+## 结果对比
 
 | 指标 | 基线 | 本轮 | 提升 |
 |---|---|---|---|

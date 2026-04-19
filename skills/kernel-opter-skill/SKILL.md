@@ -1,65 +1,119 @@
 ---
 name: kernel-opter-skill
-description: Orchestrator for CUDA kernel optimization. Runs environment check, defines the 6-step optimization loop, and routes tasks to sub-skills.
+description: Orchestrator for CUDA kernel optimization. Runs environment check, defines the optimization loop (Step 0–7), and routes tasks to sub-skills.
 ---
 
 # kernel-opter-skill
 
-## 环境检查
-
-```bash
-nvcc --version 2>&1 | grep "release" || echo "❌ nvcc 未找到"
-nvidia-smi --query-gpu=name,compute_cap,memory.total,clocks.max.sm,clocks.max.mem \
-    --format=csv,noheader 2>&1 || echo "❌ nvidia-smi 未找到"
-ncu --version 2>&1 | head -1 || echo "❌ ncu 未找到"
-python3 - <<'EOF'
-import sys
-try:
-    import torch
-    print(f"✅ PyTorch {torch.__version__}  CUDA available={torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        print(f"   GPU: {torch.cuda.get_device_name(0)}  "
-              f"compute_cap={torch.cuda.get_device_capability(0)}")
-except ImportError:
-    print("❌ PyTorch 未找到")
-    sys.exit(1)
-EOF
-```
-
-任意一项不通过，**立即停止**，先修环境。
-
----
-
-## 6 步优化流程
+## 优化流程
 
 ```mermaid
 flowchart TD
-    A[Step 0: 基线采集] --> B[Step 1: 全局定位]
+    ENV["环境检查和配置"] --> ENV_Q{通过?}
+    ENV_Q -->|否| ENV_FAIL[退出：输出错误报告]
+    ENV_Q -->|是| P["Step 0: 正确性检查"] --> Q{通过?}
+    Q -->|否| R[修复 kernel 直到 correctness pass]
+    R --> P
+    Q -->|是| A["Step 1: 性能指标采集"]
+    A --> A2["读取证据"]
+    A2 --> B[Step 2: 全局定位]
     B --> C{瓶颈类型?}
-    C -->|Memory-Bound| D[Step 2a: 优化内存访问]
-    C -->|Compute-Bound| E[Step 2b: 优化计算效率]
-    C -->|Latency-Bound| F[Step 2c: 提高并行度]
-    D --> G[Step 3: 检查占用率]
+    C -->|Memory-Bound| D[Step 3a: 优化内存访问]
+    C -->|Compute-Bound| E[Step 3b: 优化计算效率]
+    C -->|Latency-Bound| F[Step 3c: 提高并行度]
+    D --> G[Step 4: 检查占用率]
     E --> G
     F --> G
-    G --> H[Step 4: 分析 Warp 调度]
-    H --> I[Step 5: 消除分支发散]
-    I --> J[Step 6: 重新采集 & 对比]
-    J --> K{性能达标?}
-    K -->|否| B
-    K -->|是| L[优化完成]
+    G --> H[Step 5: 分析 Warp 调度]
+    H --> I[Step 6: 分析分支发散]
+    I --> I2["制定优化方向"]
+    I2 --> J["Step 7: 生成下一版 kernel & 重新采集对比"]
+    J --> K{达到最大迭代次数?}
+    K -->|否| P
+    K -->|是| L["选出 best version & 生成报告"]
 ```
 
 ---
 
-## Sub-skill 路由
+## sub-skill 路由
 
-| Sub-skill | 职责 |
-|---|---|
-| `profiling/SKILL.md` | 测量（benchmark + NCU 采集）+ 解读（指标分析 + 瓶颈定位） |
-| `cuda/SKILL.md` | 优化（按瓶颈类型给出实施策略） |
-| `opt-loop/SKILL.md` | 自动化多轮迭代 + 策略记忆 + best 选择 |
-| `report/SKILL.md` | 生成优化流程报告，将 Step 0–6 各环节决策结构化输出 |
+| sub-skill |location| 职责 |
+|---|---|---|
+|env-skill| `env/SKILL.md` | 必要环境检查 + 环境配置 |
+|profiling-skill| `profiling/SKILL.md` | 正确性检查+ NCU 采集 + 指标解读 + 瓶颈定位 |
+|cuda-skill| `cuda/SKILL.md` | cuda优化策略 |
+|report-skill| `report/SKILL.md` | 生成优化流程报告 |
+
+---
+
+## 优化循环
+
+**整个优化过程中的中间产物和 kernel 的迭代版本需要指定到一个目录中`<output_dir>`，如果未指定就在当前目录`<./>`**
+
+**优化循环最大迭代次数默认 `N=3`，用户可指定其他值**：
+
+一旦指定最大迭代次数`N`后续优化的版本次数不可更改，在`<output_dir>`中生成`N+1`个子目录分别代表不同的版本：
+
+```txtx
+|—— <output_dir>
+    |—— ref.py
+    |—— env_check.md
+    |—— v0
+        |—— correctness.md
+        |—— ncu_summary.md
+        |—— ncu_details.md
+        |—— v0.cu
+    |—— v1
+        |—— correctness.md
+        |—— ncu_summary.md
+        |—— ncu_details.md
+        |—— v1.cu
+    |—— v2
+        |—— correctness.md
+        |—— ncu_summary.md
+        |—— ncu_details.md
+        |—— v2.cu
+    |—— v3
+        |—— correctness.md
+        |—— ncu_summary.md
+        |—— ncu_details.md
+        |—— v3.cu
+    |——final_report.md
+    ...
+```
+
+`v0`表示未被优化的版本，`v1`表示第一次优化，`v2`表示第二次优化，`v3`表示第三次优化，以此类推
+
+### 环境检查和配置（env-skill 负责）
+
+* 环境检查为必要过程，环境检查**不通过直接退出**，输出环境问题
+* 输出`<output_dir>/env_check.md`文件，获取 kernel 优化的环境基础，后续的所有环境信息在此查询
+
+### Step 0: 正确性检查（profiling-skill 负责）
+
+* `ref.py`是正确性检查的reference对比，通常为pytorch实现
+* 输出`<output_dir>/v{n}/correctness.md`
+* 如果正确性不通过需要检查修复源码
+
+### Step 1: 性能指标采集（profiling-skill 负责）
+
+* 输出`<output_dir>/v{n}/ncu_summary.md`和`<output_dir>/v{n}/ncu_details.md` 这里面记录了指标情况，是后续 kernel 优化方向的依据
+
+### Step 2: 全局定位（profiling-skill & cuda-skill 负责）
+
+* 根据ncu性能指标确定`Memory-Bound`、`Compute-Bound`和`Latency-Bound`类别，详见`profiling/SKILL.md`
+
+### Step 4: 检查占用率 Step 5: 分析 Warp 调度 Step 6: 分析分支发散（profiling-skill & cuda-skill负责）
+
+* 根据ncus收集的`占用率`、`Warp 调度`,`分支发散`等相关性能指标确定优化策略
+
+### Step 7: 生成下一版 kernel & 重新采集对比
+
+* 创建子目录`<output_dir>/v{n}`，在这个目录下生成下一版 kernel & 重新采集对比
+
+### 选出 best version & 生成报告（report-skill 负责）
+
+* **当达到最大迭代次数后，停止优化, 输出`<output_dir>/final_report.md`**
 
 ---
 
