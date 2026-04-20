@@ -29,9 +29,7 @@ except ImportError:
     sys.exit(1)
 
 # NCU metrics (replace --section / --set flags)
-CORE_METRICS = [
-    "gpu__time_duration.sum",
-]
+CORE_METRICS = []
 
 SOL_METRICS = [
     "sm__throughput.avg.pct_of_peak_sustained_elapsed",
@@ -121,7 +119,6 @@ METRIC_CATEGORIES = [
 ]
 
 METRIC_LABELS = {
-    "gpu__time_duration.sum": "Kernel Duration (ns)",
     "sm__throughput.avg.pct_of_peak_sustained_elapsed": "SM Throughput (% of peak)",
     "dram__throughput.avg.pct_of_peak_sustained_elapsed": "Memory Throughput (% of peak)",
     "dram__bytes.sum.per_second": "DRAM Total Bandwidth (bytes/s)",
@@ -181,6 +178,29 @@ def _get_kernel_state(solution_file, dim_values, ptr_size, arch, seed):
 
 
 
+def time_kernel(solution_file, dim_values, ptr_size, arch, seed, warmup, iters=100):
+    """Measure kernel latency with CUDA Events. Returns (mean_ms, std_ms)."""
+    import statistics
+    state = _get_kernel_state(solution_file, dim_values, ptr_size, arch, seed)
+    fn = state["callable"]
+
+    for _ in range(warmup):
+        fn()
+    torch.cuda.synchronize()
+
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    times = []
+    for _ in range(iters):
+        start.record()
+        fn()
+        end.record()
+        torch.cuda.synchronize()
+        times.append(start.elapsed_time(end))
+
+    return statistics.mean(times), (statistics.stdev(times) if len(times) > 1 else 0.0)
+
+
 def run_profile(solution_file, dim_values, ptr_size, arch,
                 seed, warmup, output_dir):
     metrics = list(dict.fromkeys(FULL_METRICS))
@@ -207,19 +227,20 @@ def run_profile(solution_file, dim_values, ptr_size, arch,
     return df
 
 
-def format_summary(df, solution_file, dim_values, arch):
+def format_summary(df, solution_file, dim_values, arch, mean_ms, std_ms):
     gpu_name = torch.cuda.get_device_name(torch.cuda.current_device())
     active_metrics = set(FULL_METRICS)
 
     lines = [
         "# NCU Profile Summary",
         "",
-        f"| | |",
-        f"|---|---|",
+        f"| Field | Value |",
+        f"|-------|-------|",
         f"| **Kernel** | {os.path.basename(solution_file)} |",
         f"| **GPU** | {gpu_name} |",
         f"| **Arch** | {arch} |",
         f"| **Dims** | {dim_values} |",
+        f"| **Execution Time** | {mean_ms:.4f} ms ± {std_ms:.4f} ms |",
         "",
     ]
 
@@ -343,6 +364,24 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    under_nsight = (
+        "CUDA_INJECTION64_PATH" in os.environ
+        or "NV_NSIGHT_INJECTION64_PATH" in os.environ
+        or any(k.startswith("NV_NSIGHT_") for k in os.environ)
+    )
+
+    mean_ms = std_ms = 0.0
+    if not under_nsight:
+        mean_ms, std_ms = time_kernel(
+            solution_file=solution_file,
+            dim_values=dim_values,
+            ptr_size=args.ptr_size,
+            arch=arch,
+            seed=args.seed,
+            warmup=args.warmup,
+        )
+        print(f"[timing] {mean_ms:.4f} ms ± {std_ms:.4f} ms")
+
     try:
         df = run_profile(
             solution_file=solution_file,
@@ -357,7 +396,10 @@ def main():
         print(f"[ncu_profile] profiling failed: {exc}", file=sys.stderr)
         return 1
 
-    summary_txt = format_summary(df, solution_file, dim_values, arch)
+    if under_nsight:
+        return 0
+
+    summary_txt = format_summary(df, solution_file, dim_values, arch, mean_ms, std_ms)
     details_txt = format_details(df)
 
     summary_path = output_dir / "ncu_summary.md"

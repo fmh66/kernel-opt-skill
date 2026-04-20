@@ -23,6 +23,7 @@ kernel-opt-skill/
 │   ├── SKILL.md                  # 主入口，定义优化流程
 │   ├── env/                      # 环境检查与 GPU 配置
 │   ├── profiling/                # NCU 性能分析与正确性验证
+│   ├── benchmark/                # solution 与 reference 框架横向对比
 │   ├── cuda/                     # 内存/计算/延迟优化策略参考
 │   └── report/                   # 报告生成模板
 └── demo/                         # 优化实战案例（softmax、gemm……）
@@ -46,7 +47,7 @@ flowchart TD
     D --> E["Step 4–6: 深入分析（占用率 / Warp 调度 / 分支发散）"]
     E --> F[Step 7: 生成下一版本]
     F -->|循环 N 次| B
-    F -->|达到迭代上限| G["生成 final_report.md（汇总各版本，选出最优实现）"]
+    F -->|达到迭代上限| G["生成 final_report.md（汇总各版本，选出最优实现） & benchmark"]
 ```
 
 ### 输出目录结构
@@ -61,8 +62,22 @@ flowchart TD
 │   ├── ncu_summary.md      # NCU 指标摘要（LLM 友好格式）
 │   └── ncu_details.md      # NCU 完整指标表格
 ├── v1/ v2/ v3/ ...         # 各迭代版本（结构同上）
-└── final_report.md         # 最终优化对比报告
+├── final_report.md         # 最终优化对比报告
+└── benchmark.md            # 最优版本与 reference 的性能横向对比
 ```
+
+## Benchmark 对比
+
+优化循环结束后，benchmark-skill 自动将 **best version** 与 **reference implementation（PyTorch / CUTLASS）** 进行横向性能对比：
+
+| 维度 | 方式 | 说明 |
+| --- | --- | --- |
+| Execution Time | CUDA Events（100 次迭代） | 真实 wall-clock latency，不受 nsight replay 干扰 |
+| SM Throughput / Memory Throughput | nsight-python | 硬件利用率 vs peak |
+| DRAM Bandwidth | nsight-python | 实际 Memory Bandwidth 绝对值 |
+| Achieved Occupancy | nsight-python | Active warp 占比，反映并行度 |
+
+结果写入 `<output_dir>/benchmark.md`。
 
 ## 实战案例
 
@@ -70,36 +85,58 @@ flowchart TD
 
 参见 [demo/softmax/](demo/softmax/) 目录，完整记录了从基线到最优版本的 4 轮迭代过程。
 
-| 版本 | 执行时间 | 加速比 | 瓶颈类型 | 关键优化 |
+| 版本 | Execution Time | Speedup | Bottleneck | 关键优化 |
 | --- | --- | --- | --- | --- |
 | v0（基线） | 891,936 ns | 1.00× | Latency-Bound | 朴素实现（1 thread/行） |
 | v1 | **124,896 ns** | **7.14×** | Memory-Bound | 1 block/行 + Warp Shuffle |
-| v2 | 131,424 ns | 6.79× | Memory-Bound | Online Softmax + float4（L1 复用失效，性能下降） |
-| v3 | 127,808 ns | 6.98× | Memory-Bound | 3-pass + float4 + __expf__（ILP 下降，性能下降） |
+| v2 | 131,424 ns | 6.79× | Memory-Bound | Online Softmax + float4（L1 reuse 失效，性能下降） |
+| v3 | 127,808 ns | 6.98× | Memory-Bound | 3-pass + float4 + `__expf__`（ILP 下降，性能下降） |
 
 **v1 关键改进（最优版本）：**
 
-- Block 分配策略从 1 thread/行改为 1 block/行，Block 数 40 → 10,240，占用率 16.6% → 94.8%
-- 全局内存加载效率从 12.5% 提升至 100%（合并访问），DRAM 吞吐量 235 → 673 GB/s
-- 使用 Warp Shuffle 规约，仅需 32 字节 Shared Memory 即可完成 max/sum 广播，无需全局原子操作
-- `__ldg` / `__restrict__` 只读缓存提示，减少 L2 访问压力
+- Block 分配策略从 1 thread/行改为 1 block/行，Block 数 40 → 10,240，Achieved Occupancy 16.6% → 94.8%
+- Global Load Efficiency 从 12.5% 提升至 100%（coalesced access），DRAM Bandwidth 235 → 673 GB/s
+- 使用 Warp Shuffle reduce，仅需 32 字节 Shared Memory 即可完成 max/sum broadcast，无需全局 atomic 操作
+- `__ldg` / `__restrict__` read-only cache hint，减少 L2 访问压力
 
-## 实战案例
+**Benchmark：v1 vs PyTorch reference（N=10240, D=1024）**
+
+| Metric | v1（最优） | PyTorch reference |
+| --- | --- | --- |
+| Execution Time | **0.1465 ms** | 0.2657 ms |
+| SM Throughput | 33.3% | 32.8% |
+| Memory Throughput | 91.6% | 91.8% |
+| DRAM Bandwidth | 668 GB/s | 669 GB/s |
+| Achieved Occupancy | 93.0% | 93.2% |
+
+v1 Execution Time 比 PyTorch 快 **1.81×**，硬件利用率几乎持平——说明两者已同等充分利用 Memory Bandwidth，性能差距来自 PyTorch 的 dispatch overhead 而非 kernel 本身的效率差异。
 
 ### GEMM 优化
 
 参见 [demo/gemm/](demo/gemm/) 目录，完整记录了从基线到最优版本的 4 轮迭代过程。
 
-| 版本 | 执行时间 | 加速比 | 瓶颈类型 | 关键优化 |
+| 版本 | Execution Time | Speedup | Bottleneck | 关键优化 |
 | --- | --- | --- | --- | --- |
-| v0（基线） | 62.00 ms | 1.00× | Compute-Bound | 朴素实现（非合并访问） |
-| v1 | 44.80 ms | 1.38× | Compute-Bound | Shared Memory 分块（16×16） |
-| v2 | 8.75 ms | 7.09× | Balanced | 寄存器分块（每线程 4×4，64×64 tile） |
+| v0（基线） | 62.00 ms | 1.00× | Compute-Bound | 朴素实现（non-coalesced access） |
+| v1 | 44.80 ms | 1.38× | Compute-Bound | Shared Memory tiling（16×16） |
+| v2 | 8.75 ms | 7.09× | Balanced | Register blocking（每线程 4×4，64×64 tile） |
 | v3 | **6.28 ms** | **9.87×** | Memory-Bound | WMMA Tensor Core（FP16→FP32） |
 
 **v3 关键改进（最优版本）：**
 
-- 激活 WMMA Tensor Core 流水线（利用率 13.6%），FP16→FP32 片段理论峰值 310 TFLOPS
-- v2 寄存器分块将 FMA 流水线利用率从 10.6% 提升至 47.8%（每 tile 迭代 256 次 FMA vs 16 次），为 v3 奠定基础
-- v1–v3 全局内存加载效率保持 100%（合并访问 + 分块策略）
-- 代价：FP16 输入引入精度损失（最大误差 0.101）；每线程 118 个寄存器导致占用率下降至 32.7%
+- 激活 WMMA Tensor Core pipeline（utilization 13.6%），FP16→FP32 fragment 理论峰值 310 TFLOPS
+- v2 register blocking 将 FMA pipeline utilization 从 10.6% 提升至 47.8%（每 tile 迭代 256 次 FMA vs 16 次），为 v3 奠定基础
+- v1–v3 Global Load Efficiency 保持 100%（coalesced access + tiling 策略）
+- 代价：FP16 input 引入精度损失（max error 0.101）；每线程 118 个 register 导致 Achieved Occupancy 下降至 32.7%
+
+**Benchmark：v3 vs cuBLAS reference（M=K=N=4096）**
+
+| Metric | v3（最优） | cuBLAS reference |
+| --- | --- | --- |
+| Execution Time | 6.75 ms | **6.08 ms** |
+| SM Throughput | 31.8% | 31.8% |
+| Memory Throughput | 45.5% | 46.3% |
+| DRAM Bandwidth | 331 GB/s | 338 GB/s |
+| Achieved Occupancy | 32.7% | 32.7% |
+
+v3 与 cuBLAS Execution Time 相差约 **11%**，硬件利用率几乎完全一致——差距不在 kernel 效率，而在 cuBLAS 更精细的 register / warp 调度策略上。

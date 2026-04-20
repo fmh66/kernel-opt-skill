@@ -30,7 +30,7 @@ flowchart TD
     I2 --> J["Step 7: 生成下一版 kernel & 重新采集对比"]
     J --> K{达到最大迭代次数?}
     K -->|否| P
-    K -->|是| L["选出 best version & 生成报告"]
+    K -->|是| L["选出 best version & 生成报告 & benchmark"]
 ```
 
 ---
@@ -41,6 +41,7 @@ flowchart TD
 |---|---|---|
 | env | `env/SKILL.md` | 必要环境检查 + 环境配置 |
 | profiling | `profiling/SKILL.md` | 正确性检查 + NCU 采集 + 指标解读 + 瓶颈定位 |
+| benchmark | `benchmark/SKILL.md` | solution 与 reference 框架横向对比（执行时间 + 硬件指标） |
 | cuda | `cuda/SKILL.md` | CUDA 优化策略 |
 | report | `report/SKILL.md` | 生成优化流程报告 |
 
@@ -78,7 +79,8 @@ flowchart TD
 │   ├── ncu_summary.md
 │   ├── ncu_details.md
 │   └── v3.cu
-└── final_report.md
+├── final_report.md
+└── benchmark.md
 ```
 
 `v0` 为初始未优化版本，`v1` 表示第一次优化，`v2` 表示第二次优化，`v3` 表示第三次优化，以此类推
@@ -110,9 +112,10 @@ flowchart TD
 
 * 创建子目录`<output_dir>/v{n}`，在这个目录下生成下一版 kernel & 重新采集对比
 
-### 选出 best version & 生成报告（report-skill 负责）
+### 选出 best version & 生成报告（report-skill 负责）& benchmark（benchmark-skill 负责）
 
 * **当达到最大迭代次数后，停止优化，输出`<output_dir>/final_report.md`**
+* 选取 **best version** 与 **reference implementation (PyTorch/CUTLASS)** 进行对比，输出`<output_dir>/benchmark.md`
 
 ---
 

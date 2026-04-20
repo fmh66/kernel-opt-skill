@@ -3,3 +3,4 @@ test
 .claude
 .venv
 __pycache__
+*.so
