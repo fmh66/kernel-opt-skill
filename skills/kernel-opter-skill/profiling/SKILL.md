@@ -5,6 +5,18 @@ description: Validate CUDA kernel correctness and collect NCU profiles; interpre
 
 # Profiling & NCU 解读
 
+## 目录结构
+
+```
+profiling/
+├── SKILL.md
+├── reference/
+│   └── NCU.md
+└── script/
+    ├── correctness_check.py
+    └── ncu_profile.py
+```
+
 ## Correctness Check
 
 > **前置条件**：需先通过 nvcc 编译好 `.so` 文件，脚本只加载不编译。
@@ -14,7 +26,7 @@ description: Validate CUDA kernel correctness and collect NCU profiles; interpre
 nvcc -shared -std=c++17 -arch=sm_90 -O3 -Xcompiler -fPIC -o kernel.so kernel.cu
 
 # 再检查正确性
-python skills/kernel-opter-skill/profiling/script/correctness_check.py <kernel.cu> \
+python script/correctness_check.py <kernel.cu> \
     --ref=<ref.py> \
     --M=<M> --N=<N> \
     --output-dir=<dir> \
@@ -45,7 +57,7 @@ python skills/kernel-opter-skill/profiling/script/correctness_check.py <kernel.c
 > **前置条件**：需先通过 nvcc 编译好 `.so` 文件，脚本只加载不编译。nsight-python 内部管理 ncu 子进程，无需手动构造 ncu 命令。
 
 ```bash
-python skills/kernel-opter-skill/profiling/script/ncu_profile.py <kernel.cu> \
+python script/ncu_profile.py <kernel.cu> \
     --output-dir=<dir> \
     --M=<M> --N=<N> \
     [--warmup=<n>] \
@@ -75,8 +87,8 @@ python skills/kernel-opter-skill/profiling/script/ncu_profile.py <kernel.cu> \
 | `--gpu` | | 0 | GPU 设备索引 |
 | `--seed` | | 42 | 随机种子 |
 
-
-> **数据量建议**：单一数据量的 NCU 结果可能受边界效应影响（如 warp 数量恰好整除、L2 完全命中等），结论不够可靠。建议对同一 kernel **至少用 3 个数据量级**（每次 ×10，如 `--ptr-size=1024`、`10240`、`102400`）分别采集，若三者瓶颈分类一致则结论可信；若出现分歧，以**最大规模**为准（小数据量更易受 launch overhead 和 cache 暖机干扰）。
+> **整型维度建议**：优选选用`10240`、`102400`...数量级大的数据
+> **注意**：所有迭代版本的整型维度保持一致
 
 ---
 
@@ -112,4 +124,4 @@ python skills/kernel-opter-skill/profiling/script/ncu_profile.py <kernel.cu> \
 
 ---
 
-> 优化策略请查看`cuda-skill`(`kernel-opter-skill/cuda/SKILL.md`)
+> 优化策略详见 cuda-skill（`kernel-opter-skill/cuda/SKILL.md`）

@@ -5,6 +5,17 @@ description: CUDA optimization strategies by bottleneck type. Assumes bottleneck
 
 # CUDA 优化策略
 
+## 目录结构
+
+```
+cuda/
+├── SKILL.md
+└── reference/
+    ├── compute-opt.md
+    ├── latency-opt.md
+    └── memory-opt.md
+```
+
 ## Memory-Bound
 
 **优化优先级**：

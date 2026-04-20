@@ -37,12 +37,12 @@ flowchart TD
 
 ## sub-skill 路由
 
-| sub-skill |location| 职责 |
+| sub-skill | location | 职责 |
 |---|---|---|
-|env-skill| `env/SKILL.md` | 必要环境检查 + 环境配置 |
-|profiling-skill| `profiling/SKILL.md` | 正确性检查+ NCU 采集 + 指标解读 + 瓶颈定位 |
-|cuda-skill| `cuda/SKILL.md` | cuda优化策略 |
-|report-skill| `report/SKILL.md` | 生成优化流程报告 |
+| env-skill | `env/SKILL.md` | 必要环境检查 + 环境配置 |
+| profiling-skill | `profiling/SKILL.md` | 正确性检查 + NCU 采集 + 指标解读 + 瓶颈定位 |
+| cuda-skill | `cuda/SKILL.md` | CUDA 优化策略 |
+| report-skill | `report/SKILL.md` | 生成优化流程报告 |
 
 ---
 
@@ -52,9 +52,9 @@ flowchart TD
 
 **优化循环最大迭代次数默认 `N=3`，用户可指定其他值**：
 
-一旦指定最大迭代次数`N`后续优化的版本次数不可更改，在`<output_dir>`中生成`N+1`个子目录分别代表不同的版本：
+一旦指定最大迭代次数 `N`，后续迭代版本数不可更改，在 `<output_dir>` 中生成 `N+1` 个子目录分别代表不同的版本：
 
-```txtx
+```txt
 |—— <output_dir>
     |—— ref.py
     |—— env_check.md
@@ -82,30 +82,30 @@ flowchart TD
     ...
 ```
 
-`v0`表示未被优化的版本，`v1`表示第一次优化，`v2`表示第二次优化，`v3`表示第三次优化，以此类推
+`v0` 为初始未优化版本，`v1` 表示第一次优化，`v2` 表示第二次优化，`v3` 表示第三次优化，以此类推
 
 ### 环境检查和配置（env-skill 负责）
 
-* 环境检查为必要过程，环境检查**不通过直接退出**，输出环境问题
-* 输出`<output_dir>/env_check.md`文件，获取 kernel 优化的环境基础，后续的所有环境信息在此查询
+* 环境检查为必要步骤，**不通过则直接退出**并输出问题详情
+* 输出 `<output_dir>/env_check.md`，记录 kernel 优化的环境基础信息，后续所有环境信息均从此文件查询
 
 ### Step 0: 正确性检查（profiling-skill 负责）
 
-* `ref.py`是正确性检查的reference对比，通常为pytorch实现
-* 输出`<output_dir>/v{n}/correctness.md`
-* 如果正确性不通过需要检查修复源码
+* `ref.py` 为正确性检查的参考对比（reference），通常为 PyTorch 实现
+* 输出 `<output_dir>/v{n}/correctness.md`
+* 若正确性检查不通过，需检查并修复源码
 
 ### Step 1: 性能指标采集（profiling-skill 负责）
 
-* 输出`<output_dir>/v{n}/ncu_summary.md`和`<output_dir>/v{n}/ncu_details.md` 这里面记录了指标情况，是后续 kernel 优化方向的依据
+* 输出 `<output_dir>/v{n}/ncu_summary.md` 和 `<output_dir>/v{n}/ncu_details.md`，其中记录各项指标，是后续 kernel 优化方向的依据
 
 ### Step 2: 全局定位（profiling-skill & cuda-skill 负责）
 
-* 根据ncu性能指标确定`Memory-Bound`、`Compute-Bound`和`Latency-Bound`类别，详见`profiling/SKILL.md`
+* 根据 NCU 性能指标确定 `Memory-Bound`、`Compute-Bound` 和 `Latency-Bound` 类别，详见 `profiling/SKILL.md`
 
-### Step 4: 检查占用率 Step 5: 分析 Warp 调度 Step 6: 分析分支发散（profiling-skill & cuda-skill负责）
+### Step 4: 检查占用率 / Step 5: 分析 Warp 调度 / Step 6: 分析分支发散（profiling-skill & cuda-skill 负责）
 
-* 根据ncus收集的`占用率`、`Warp 调度`,`分支发散`等相关性能指标确定优化策略
+* 根据 NCU 采集的 `占用率`、`Warp 调度`、`分支发散` 等相关性能指标确定优化策略
 
 ### Step 7: 生成下一版 kernel & 重新采集对比
 
@@ -113,7 +113,7 @@ flowchart TD
 
 ### 选出 best version & 生成报告（report-skill 负责）
 
-* **当达到最大迭代次数后，停止优化, 输出`<output_dir>/final_report.md`**
+* **当达到最大迭代次数后，停止优化，输出`<output_dir>/final_report.md`**
 
 ---
 

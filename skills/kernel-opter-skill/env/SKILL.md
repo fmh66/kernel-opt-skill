@@ -5,6 +5,16 @@ description: Environment readiness check and configuration for CUDA kernel optim
 
 # env
 
+## 目录结构
+
+```
+env/
+├── SKILL.md
+└── scripts/
+    ├── enc_config.py
+    └── env_check.py
+```
+
 环境检查和配置是 kernel 优化前的重要准备工作。**若任一 required 项失败，立即停止后续优化。**
 
 ## scripts
@@ -21,7 +31,7 @@ description: Environment readiness check and configuration for CUDA kernel optim
 ### 用法
 
 ```bash
-python skills/kernel-opter-skill/env/scripts/env_check.py -o <output_dir>/env_check.md [--gpu 0]
+python scripts/env_check.py -o <output_dir>/env_check.md [--gpu 0]
 ```
 
 读取`<output_dir>/env_check.md` 文件获取 kernel 优化的环境基础，后续的所有环境信息在此查询。
@@ -46,12 +56,12 @@ python skills/kernel-opter-skill/env/scripts/env_check.py -o <output_dir>/env_ch
 ## scripts/enc_config.py
 
 - 在 kernel 优化前调用，将目标 GPU 的 SM 时钟锁定到最大频率，消除频率抖动对性能数据的干扰。
-- 如果没有设置成功也不允许后续优化
+- 若设置失败，同样不允许继续后续优化
 
 ### 用法
 
 ```bash
-python skills/kernel-opter-skill/env/scripts/enc_config.py --gpu [0,1,2...]
+python scripts/enc_config.py --gpu [0,1,2...]
 ```
 
 ### 退出码

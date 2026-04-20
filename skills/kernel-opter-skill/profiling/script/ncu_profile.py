@@ -28,10 +28,7 @@ except ImportError:
     print("nsight-python is not installed. Install with: pip install nsight-python", file=sys.stderr)
     sys.exit(1)
 
-# ---------------------------------------------------------------------------
-# Metric definitions (replace --section / --set flags)
-# ---------------------------------------------------------------------------
-
+# NCU metrics (replace --section / --set flags)
 CORE_METRICS = [
     "gpu__time_duration.sum",
 ]
@@ -110,7 +107,6 @@ FULL_METRICS = (
     + WARP_STALL_METRICS + BRANCH_METRICS + EXTRA_FULL_METRICS
 )
 
-# Category labels for text summary formatting
 METRIC_CATEGORIES = [
     ("Speed of Light", SOL_METRICS),
     ("Memory Workload Analysis", MEMORY_METRICS),
@@ -124,7 +120,6 @@ METRIC_CATEGORIES = [
     ("Kernel Runtime", CORE_METRICS),
 ]
 
-# Human-readable names for metrics
 METRIC_LABELS = {
     "gpu__time_duration.sum": "Kernel Duration (ns)",
     "sm__throughput.avg.pct_of_peak_sustained_elapsed": "SM Throughput (% of peak)",
@@ -171,14 +166,11 @@ METRIC_LABELS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Module-level kernel state (shared between parent and ncu child process)
-# ---------------------------------------------------------------------------
+# shared between parent and ncu child process
 _kernel_state = None
 
 
 def _get_kernel_state(solution_file, dim_values, ptr_size, arch, seed):
-    """Lazily initialize kernel state (loads pre-compiled .so)."""
     global _kernel_state
     if _kernel_state is None:
         _kernel_state = _setup_cuda(
@@ -188,13 +180,9 @@ def _get_kernel_state(solution_file, dim_values, ptr_size, arch, seed):
     return _kernel_state
 
 
-# ---------------------------------------------------------------------------
-# Profiling entry points
-# ---------------------------------------------------------------------------
 
 def run_profile(solution_file, dim_values, ptr_size, arch,
                 seed, warmup, output_dir):
-    """Run nsight-python profiling and return DataFrame."""
     metrics = list(dict.fromkeys(FULL_METRICS))
 
     @nsight.analyze.kernel(
@@ -202,7 +190,7 @@ def run_profile(solution_file, dim_values, ptr_size, arch,
         runs=1,
         output="quiet",
         output_csv=False,
-        clock_control="none",
+        clock_control="none",  # clocks locked externally by enc_config.py
         cache_control="all",
     )
     def profile_solve(warmup_count):
@@ -220,7 +208,6 @@ def run_profile(solution_file, dim_values, ptr_size, arch,
 
 
 def format_summary(df, solution_file, dim_values, arch):
-    """Format DataFrame into a markdown summary organized by metric category."""
     gpu_name = torch.cuda.get_device_name(torch.cuda.current_device())
     active_metrics = set(FULL_METRICS)
 
@@ -277,7 +264,6 @@ def format_summary(df, solution_file, dim_values, arch):
 
 
 def format_details(df):
-    """Format DataFrame into a markdown detailed metric table (all metrics, all stats)."""
     lines = [
         "# NCU Profile Details — All Metrics",
         "",
@@ -322,9 +308,6 @@ def format_details(df):
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(

@@ -22,10 +22,6 @@ import argparse
 import importlib.util
 import torch
 
-# ---------------------------------------------------------------------------
-# Type tables
-# ---------------------------------------------------------------------------
-
 SUPPORTED_TYPES = {
     "float*": ("float*", ctypes.c_void_p),
     "double*": ("double*", ctypes.c_void_p),
@@ -59,10 +55,6 @@ DTYPE_MAP = {
 }
 
 INT_TYPES = {"int", "long", "size_t", "unsigned int"}
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def parse_solve_signature(cu_file: str):
@@ -102,7 +94,6 @@ def parse_solve_signature(cu_file: str):
 
 
 def detect_arch(device_index: int | None = None) -> str:
-    """Auto-detect GPU compute capability and return sm_XX string."""
     if torch.cuda.is_available():
         if device_index is None:
             device_index = torch.cuda.current_device()
@@ -115,7 +106,7 @@ _STRIP_INCLUDES = re.compile(r'^\s*#\s*include\s*<__clang_cuda[^>]*>\s*$', re.MU
 
 
 def _preprocess_cu(cu_file: str) -> str:
-    """Strip clang-specific includes that break nvcc. Returns path to clean file."""
+    """Strip clang-specific includes that break nvcc."""
     with open(cu_file, "r", encoding="utf-8") as f:
         src = f.read()
     cleaned = _STRIP_INCLUDES.sub("", src)
@@ -128,7 +119,6 @@ def _preprocess_cu(cu_file: str) -> str:
 
 
 def compile_cu(cu_file: str, output_so: str, arch: str, nvcc_bin: str):
-    """Compile .cu to a shared library via nvcc."""
     clean_file = _preprocess_cu(cu_file)
     cmd = [nvcc_bin]
     if os.name != "nt":
@@ -141,6 +131,7 @@ def compile_cu(cu_file: str, output_so: str, arch: str, nvcc_bin: str):
 
     cmd.extend(["-shared", "-std=c++17", f"-arch={arch}", "-O3", "-o", output_so, clean_file])
 
+    # strip NCU injection env vars that intercept subprocess execution
     _NCU_PREFIXES = ("NV_NSIGHT_", "NV_CUDA_", "NV_TPS_", "NV_COMPUTE_PROFILER_")
     _NCU_KEYS = ("LD_PRELOAD", "CUDA_INJECTION64_PATH", "NVTX_INJECTION64_PATH",
                  "CUPTI_INJECTION64_PATH", "DYLD_INSERT_LIBRARIES")
@@ -173,7 +164,6 @@ def compile_cu(cu_file: str, output_so: str, arch: str, nvcc_bin: str):
 
 
 def load_reference(ref_file: str):
-    """Import a Python reference file and return its module."""
     if not os.path.exists(ref_file):
         raise FileNotFoundError(f"Reference file not found: {ref_file}")
     spec = importlib.util.spec_from_file_location("_ref_module", ref_file)
@@ -193,7 +183,6 @@ def clone_value(value):
 
 
 def _determine_ptr_elems(int_values: list, ptr_size_override: int) -> int:
-    """Calculate number of elements for pointer buffers from dimension values."""
     if ptr_size_override > 0:
         ptr_elems = ptr_size_override
     elif len(int_values) == 0:
@@ -203,11 +192,10 @@ def _determine_ptr_elems(int_values: list, ptr_size_override: int) -> int:
     else:
         sv = sorted(int_values, reverse=True)
         ptr_elems = sv[0] * sv[1]
-    return min(ptr_elems, 256 * 1024 * 1024)
+    return min(ptr_elems, 256 * 1024 * 1024)  # cap at 256M elements (~1 GB for float32)
 
 
 def _fmt_vals(vals, width=10):
-    """Format a list of numeric values for compact display."""
     return "[" + ", ".join(f"{v:>{width}.4f}" for v in vals) + "]"
 
 
@@ -228,10 +216,6 @@ def _write_md_out(output_dir: str, content: str):
         f.write(content)
     print(f"[ncu_profile] correctness -> {path}")
 
-
-# ---------------------------------------------------------------------------
-# Setup: load .so + allocate buffers
-# ---------------------------------------------------------------------------
 
 
 def _setup_cuda(solution_file, dim_values, ptr_size_override, arch, seed=None):
@@ -312,10 +296,6 @@ def _setup_cuda(solution_file, dim_values, ptr_size_override, arch, seed=None):
     }
 
 
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
-
 
 def _validate_outputs(kernel_tensors, ref_tensors, output_params, atol, rtol):
     """Compare kernel and reference output tensors. Returns (all_pass, md_rows)."""
@@ -371,14 +351,9 @@ def _validate_outputs(kernel_tensors, ref_tensors, output_params, atol, rtol):
     return all_pass, md_rows
 
 
-# ---------------------------------------------------------------------------
-# Main: correctness check
-# ---------------------------------------------------------------------------
-
 
 def _build_md(solution_file, ref_file, gpu_name, arch, dim_values, ptr_elems,
               atol, rtol, validation_passed, md_rows):
-    """Build markdown correctness report."""
     result_str = "ALL PASS" if validation_passed else "FAILED"
     lines = [
         "# Correctness Check",
@@ -423,7 +398,6 @@ def _build_md(solution_file, ref_file, gpu_name, arch, dim_values, ptr_elems,
 
 
 def run(solution_file, ref_file, dim_values, ptr_size_override, arch, atol, rtol, seed, output_dir=""):
-    """Load pre-compiled kernel, run against reference, report correctness."""
     if not ref_file:
         print("[error] --ref is required for correctness checking.", file=sys.stderr)
         sys.exit(1)
@@ -494,10 +468,6 @@ def run(solution_file, ref_file, dim_values, ptr_size_override, arch, atol, rtol
     if not validation_passed:
         sys.exit(1)
 
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 
 def main():

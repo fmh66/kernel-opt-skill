@@ -1,14 +1,5 @@
 # NCU 指标解读参考
 
-## 读取命令
-
-```bash
-ncu --import <file.ncu-rep> --print-summary per-kernel   # 各 kernel 指标纵览
-ncu --import <file.ncu-rep> --page details               # 逐 section 原始数据
-```
-
----
-
 ## 一、瓶颈分类（SpeedOfLight）
 
 | 指标 | 含义 |
