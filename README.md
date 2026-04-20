@@ -100,30 +100,32 @@ v1 is **1.81× faster** than PyTorch with near-identical hardware utilization �
 
 ### GEMM Optimization
 
-See [demo/gemm/](demo/gemm/) for a complete 4-iteration walkthrough from baseline to best version.
+See [demo/gemm/](demo/gemm/) for a complete 3-iteration walkthrough from baseline to best version.
 
 | Version | Latency | Speedup | Bottleneck | Key Optimization |
 | --- | --- | --- | --- | --- |
-| v0 (baseline) | 62.00 ms | 1.00× | Compute-Bound | Naive (non-coalesced loads) |
-| v1 | 44.80 ms | 1.38× | Compute-Bound | Shared Memory Tiling (16×16) |
-| v2 | 8.75 ms | 7.09× | Balanced | Register Blocking (4×4 per thread, 64×64 tile) |
-| v3 | **6.28 ms** | **9.87×** | Memory-Bound | WMMA Tensor Cores (FP16→FP32) |
+| v0 (baseline) | 64.23 ms | 1.00× | Latency-Bound | Naive (non-coalesced loads, no shared memory) |
+| v1 | 47.88 ms | 1.34× | Latency-Bound | Shared Memory Tiling (32×32) |
+| v2 | 11.64 ms | 5.52× | Balanced | 2D Register Blocking (4×4 per thread, 64×64 tile, BK=8) |
+| v3 | **9.43 ms** | **6.81×** | Balanced | BK doubled + TM=8 + smem padding + float4 stores |
 
 **v3 key improvements (best version):**
 
-- WMMA Tensor Core pipeline activated (13.6% utilization); FP16→FP32 fragments unlock 310 TFLOPS theoretical throughput
-- v2 register blocking raised FMA pipe utilization 10.6% → 47.8% (256 FMAs/tile vs 16) — foundation for v3
-- Global load efficiency maintained at 100% across v1–v3 (coalesced tiled access)
-- Trade-off: FP16 inputs introduce precision loss (max error 0.101); occupancy drops to 32.7% due to 118 registers/thread
+- K-tile doubled (BK: 8→16): 2× more FMAs per tile (BK×TM×TN = 512), half the `__syncthreads()` calls
+- Thread tile deepened (TM: 4→8): more register-level data reuse; IPC 0.52→0.72, Issue Slot 52%→72%
+- Shared memory padding (`sA[BK][BM+1]`): odd column stride breaks stride-TM bank conflict, L1 bank conflicts drop 5×
+- Float4 vectorized C stores: Global Store Efficiency 25%→100%
+- FMA Pipe Utilization 38.58%→55.81%; all stall categories drop sharply (Long SB: 3.01→0.88, Short SB: 2.97→0.15, Barrier: 1.99→0.43)
+- Trade-off: 122 registers/thread reduces Achieved Occupancy from 65.25% to 32.69%
 
-**Benchmark: v3 vs cuBLAS reference (M=K=N=4096)**
+**Benchmark: v3 vs PyTorch reference (M=K=N=4096)**
 
-| Metric | v3 (best) | cuBLAS reference |
+| Metric | v3 (best) | PyTorch reference |
 | --- | --- | --- |
-| Execution time | 6.75 ms | **6.08 ms** |
-| SM Throughput | 31.8% | 31.8% |
-| Memory Throughput | 45.5% | 46.3% |
-| DRAM Bandwidth | 331 GB/s | 338 GB/s |
+| Execution time | 9.41 ms | **6.18 ms** |
+| SM Throughput | 72.6% | 72.5% |
+| Memory Throughput | 74.0% | 74.3% |
+| DRAM Bandwidth | 539 GB/s | 541 GB/s |
 | Achieved Occupancy | 32.7% | 32.7% |
 
-v3 is within **11% of cuBLAS** with virtually identical hardware utilization — the gap is not in kernel efficiency but in cuBLAS's more refined register and warp scheduling.
+v3 is **1.52× slower than PyTorch (cuBLAS)** with near-identical hardware utilization — the gap is not in kernel efficiency but in cuBLAS's more refined ILP and instruction scheduling.

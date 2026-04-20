@@ -2,48 +2,47 @@
 
 | Metric | AvgValue | StdDev | Min | Max | Stable |
 |--------|----------:|--------:|----:|----:|:------:|
-| Kernel Duration (ns) | 4.48e+07 | nan | 4.48e+07 | 4.48e+07 | no |
-| SM Throughput (% of peak) | 96.4831 | nan | 96.4831 | 96.4831 | no |
-| Memory Throughput (% of peak) | 53.0979 | nan | 53.0979 | 53.0979 | no |
-| DRAM Total Bandwidth (bytes/s) | 3.87e+11 | nan | 3.87e+11 | 3.87e+11 | no |
-| DRAM Read Bandwidth (bytes/s) | 3.86e+11 | nan | 3.86e+11 | 3.86e+11 | no |
-| DRAM Write Bandwidth (bytes/s) | 1.55e+09 | nan | 1.55e+09 | 1.55e+09 | no |
-| L1 Global Load Bandwidth (bytes/s) | 7.55e+11 | nan | 7.55e+11 | 7.55e+11 | no |
-| L1 Global Store Bandwidth (bytes/s) | 1.50e+09 | nan | 1.50e+09 | 1.50e+09 | no |
-| L2 Total Bandwidth (bytes/s) | 7.68e+11 | nan | 7.68e+11 | 7.68e+11 | no |
+| SM Throughput (% of peak) | 79.2728 | nan | 79.2728 | 79.2728 | no |
+| Memory Throughput (% of peak) | 25.6569 | nan | 25.6569 | 25.6569 | no |
+| DRAM Total Bandwidth (bytes/s) | 1.87e+11 | nan | 1.87e+11 | 1.87e+11 | no |
+| DRAM Read Bandwidth (bytes/s) | 1.86e+11 | nan | 1.86e+11 | 1.86e+11 | no |
+| DRAM Write Bandwidth (bytes/s) | 1.47e+09 | nan | 1.47e+09 | 1.47e+09 | no |
+| L1 Global Load Bandwidth (bytes/s) | 3.65e+11 | nan | 3.65e+11 | 3.65e+11 | no |
+| L1 Global Store Bandwidth (bytes/s) | 1.43e+09 | nan | 1.43e+09 | 1.43e+09 | no |
+| L2 Total Bandwidth (bytes/s) | 3.66e+11 | nan | 3.66e+11 | 3.66e+11 | no |
 | Global Load Efficiency (%) | 100.0000 | nan | 100.0000 | 100.0000 | no |
 | Global Store Efficiency (%) | 100.0000 | nan | 100.0000 | 100.0000 | no |
-| L1 Hit Rate (%) | 0.0777 | nan | 0.0777 | 0.0777 | no |
-| L2 Hit Rate (%) | 49.7920 | nan | 49.7920 | 49.7920 | no |
-| FMA Pipe Utilization (% of peak) | 10.6286 | nan | 10.6286 | 10.6286 | no |
+| L1 Hit Rate (%) | 0.0000 | nan | 0.0000 | 0.0000 | no |
+| L2 Hit Rate (%) | 49.1264 | nan | 49.1264 | 49.1264 | no |
+| FMA Pipe Utilization (% of peak) | 7.9277 | nan | 7.9277 | 7.9277 | no |
 | Tensor Core Utilization (% of peak) | 0.0000 | nan | 0.0000 | 0.0000 | no |
-| IPC (instructions per cycle) | 0.3088 | nan | 0.3088 | 0.3088 | no |
-| Achieved Occupancy (%) | 99.8181 | nan | 99.8181 | 99.8181 | no |
-| Theoretical Occupancy (%) | 100.0000 | nan | 100.0000 | 100.0000 | no |
-| Block Size | 256.0000 | nan | 256.0000 | 256.0000 | no |
-| Grid Size | 65536.0000 | nan | 65536.0000 | 65536.0000 | no |
+| IPC (instructions per cycle) | 0.2154 | nan | 0.2154 | 0.2154 | no |
+| Achieved Occupancy (%) | 66.6760 | nan | 66.6760 | 66.6760 | no |
+| Theoretical Occupancy (%) | 66.6667 | nan | 66.6667 | 66.6667 | no |
+| Block Size | 1024.0000 | nan | 1024.0000 | 1024.0000 | no |
+| Grid Size | 16384.0000 | nan | 16384.0000 | 16384.0000 | no |
 | Registers / Thread | 38.0000 | nan | 38.0000 | 38.0000 | no |
-| Static Shared Memory (bytes) | 2048.0000 | nan | 2048.0000 | 2048.0000 | no |
+| Static Shared Memory (bytes) | 8192.0000 | nan | 8192.0000 | 8192.0000 | no |
 | Dynamic Shared Memory (bytes) | 0.0000 | nan | 0.0000 | 0.0000 | no |
-| Waves / SM | 130.0317 | nan | 130.0317 | 130.0317 | no |
-| Issue Slot Utilization (% of peak) | 30.8812 | nan | 30.8812 | 30.8812 | no |
-| Eligible Warps / Cycle | 1.1912 | nan | 1.1912 | 1.1912 | no |
-| Stall: Barrier | 6.7834 | nan | 6.7834 | 6.7834 | no |
-| Stall: Long Scoreboard | 8.7248 | nan | 8.7248 | 8.7248 | no |
-| Stall: Short Scoreboard | 0.4820 | nan | 0.4820 | 0.4820 | no |
-| Stall: Math Pipe Throttle | 0.1455 | nan | 0.1455 | 0.1455 | no |
-| Stall: Wait | 1.8967 | nan | 1.8967 | 1.8967 | no |
-| Stall: No Instruction | 0.0759 | nan | 0.0759 | 0.0759 | no |
-| Stall: Not Selected | 2.7045 | nan | 2.7045 | 2.7045 | no |
-| Branch Targets (total) | 1.35e+08 | nan | 1.35e+08 | 1.35e+08 | no |
+| Waves / SM | 195.0476 | nan | 195.0476 | 195.0476 | no |
+| Issue Slot Utilization (% of peak) | 21.5373 | nan | 21.5373 | 21.5373 | no |
+| Eligible Warps / Cycle | 0.9893 | nan | 0.9893 | 0.9893 | no |
+| Stall: Barrier | 3.0076 | nan | 3.0076 | 3.0076 | no |
+| Stall: Long Scoreboard | 5.6563 | nan | 5.6563 | 5.6563 | no |
+| Stall: Short Scoreboard | 0.0864 | nan | 0.0864 | 0.0864 | no |
+| Stall: Math Pipe Throttle | 0.6202 | nan | 0.6202 | 0.6202 | no |
+| Stall: Wait | 1.8012 | nan | 1.8012 | 1.8012 | no |
+| Stall: No Instruction | 0.0981 | nan | 0.0981 | 0.0981 | no |
+| Stall: Not Selected | 3.5936 | nan | 3.5936 | 3.5936 | no |
+| Branch Targets (total) | 6.76e+07 | nan | 6.76e+07 | 6.76e+07 | no |
 | Divergent Branch Targets (total) | 0.0000 | nan | 0.0000 | 0.0000 | no |
 | FADD Throughput (per cycle) | 0.0000 | nan | 0.0000 | 0.0000 | no |
 | FMUL Throughput (per cycle) | 0.0000 | nan | 0.0000 | 0.0000 | no |
-| FFMA Throughput (per cycle) | 864.0671 | nan | 864.0671 | 864.0671 | no |
-| LSU Pipe Utilization (% of peak) | 24.2558 | nan | 24.2558 | 24.2558 | no |
+| FFMA Throughput (per cycle) | 774.4432 | nan | 774.4432 | 774.4432 | no |
+| LSU Pipe Utilization (% of peak) | 19.9118 | nan | 19.9118 | 19.9118 | no |
 | Warp Execution Efficiency | 32.0000 | nan | 32.0000 | 32.0000 | no |
-| L1 Bank Conflicts (total) | 2.81e+08 | nan | 2.81e+08 | 2.81e+08 | no |
-| Shared Memory Bandwidth (bytes/s) | 4.22e+12 | nan | 4.22e+12 | 4.22e+12 | no |
+| L1 Bank Conflicts (total) | 3.23e+07 | nan | 3.23e+07 | 3.23e+07 | no |
+| Shared Memory Bandwidth (bytes/s) | 6.39e+12 | nan | 6.39e+12 | 6.39e+12 | no |
 
 ## Context
 

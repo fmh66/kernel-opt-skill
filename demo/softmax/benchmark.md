@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Solution** | `v1.cu` |
+| **Solution** | `v3.cu` |
 | **Reference** | `ref.py` |
 | **GPU** | NVIDIA RTX A6000 |
 | **Arch** | sm_86 |
@@ -13,14 +13,14 @@
 
 | Metric | Solution | Reference |
 |--------|----------:|----------:|
-| Execution Time (ms) | 0.1465 | 0.2657 |
-| Std dev (ms)        | 0.0041 | 0.0034 |
+| Execution Time (ms) | 0.1469 | 0.2721 |
+| Std dev (ms)        | 0.0047 | 0.0277 |
 
 ## Hardware Metrics (nsight-python)
 
 | Metric | Solution | Reference |
 |--------|----------:|----------:|
-| SM Throughput (% peak) | 33.2930 | 32.8008 |
-| Memory Throughput (% peak) | 91.6127 | 91.8213 |
-| DRAM Bandwidth (bytes/s) | 6.68e+11 | 6.69e+11 |
-| Achieved Occupancy (%) | 93.0198 | 93.1522 |
+| SM Throughput (% peak) | 32.1647 | 32.0478 |
+| Memory Throughput (% peak) | 91.8881 | 92.5685 |
+| DRAM Bandwidth (bytes/s) | 6.70e+11 | 6.75e+11 |
+| Achieved Occupancy (%) | 94.2768 | 94.4619 |

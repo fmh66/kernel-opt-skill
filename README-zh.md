@@ -2,7 +2,7 @@
 
 面向 CUDA 的 kernel 优化 Skill，通过系统化的性能分析、瓶颈定位和迭代优化，帮助开发者快速提升 CUDA kernel 性能。
 
-[English](ReadMe.md)
+[English](README.md)
 
 ## 环境要求
 
@@ -113,30 +113,32 @@ v1 Execution Time 比 PyTorch 快 **1.81×**，硬件利用率几乎持平——
 
 ### GEMM 优化
 
-参见 [demo/gemm/](demo/gemm/) 目录，完整记录了从基线到最优版本的 4 轮迭代过程。
+参见 [demo/gemm/](demo/gemm/) 目录，完整记录了从基线到最优版本的 3 轮迭代过程。
 
 | 版本 | Execution Time | Speedup | Bottleneck | 关键优化 |
 | --- | --- | --- | --- | --- |
-| v0（基线） | 62.00 ms | 1.00× | Compute-Bound | 朴素实现（non-coalesced access） |
-| v1 | 44.80 ms | 1.38× | Compute-Bound | Shared Memory tiling（16×16） |
-| v2 | 8.75 ms | 7.09× | Balanced | Register blocking（每线程 4×4，64×64 tile） |
-| v3 | **6.28 ms** | **9.87×** | Memory-Bound | WMMA Tensor Core（FP16→FP32） |
+| v0（基线） | 64.23 ms | 1.00× | Latency-Bound | 朴素实现（non-coalesced access，无共享内存） |
+| v1 | 47.88 ms | 1.34× | Latency-Bound | Shared Memory Tiling（32×32） |
+| v2 | 11.64 ms | 5.52× | Balanced | 2D 寄存器分块（每线程 4×4，64×64 tile，BK=8） |
+| v3 | **9.43 ms** | **6.81×** | Balanced | BK 加倍 + TM=8 + smem padding + float4 store |
 
 **v3 关键改进（最优版本）：**
 
-- 激活 WMMA Tensor Core pipeline（utilization 13.6%），FP16→FP32 fragment 理论峰值 310 TFLOPS
-- v2 register blocking 将 FMA pipeline utilization 从 10.6% 提升至 47.8%（每 tile 迭代 256 次 FMA vs 16 次），为 v3 奠定基础
-- v1–v3 Global Load Efficiency 保持 100%（coalesced access + tiling 策略）
-- 代价：FP16 input 引入精度损失（max error 0.101）；每线程 118 个 register 导致 Achieved Occupancy 下降至 32.7%
+- K-tile 加倍（BK: 8→16），每轮 tile 计算量翻倍（BK×TM×TN = 16×8×4 = 512 FMA），__syncthreads() 频率减半
+- 线程 tile 加深（TM: 4→8），寄存器级数据复用增强，IPC 0.52 → 0.72，Issue Slot 52% → 72%
+- 共享内存 padding（`sA[BK][BM+1]`），奇数列步长打破 stride-TM bank conflict，L1 Bank Conflicts 降低 5×
+- Float4 向量化 C 写出，Global Store Efficiency 25% → 100%
+- FMA Pipe Utilization 38.58% → 55.81%，所有 stall 指标大幅下降（Long SB: 3.01→0.88，Short SB: 2.97→0.15，Barrier: 1.99→0.43）
+- 代价：每线程 122 个 register，Achieved Occupancy 从 65.25% 降至 32.69%
 
-**Benchmark：v3 vs cuBLAS reference（M=K=N=4096）**
+**Benchmark：v3 vs PyTorch reference（M=K=N=4096）**
 
-| Metric | v3（最优） | cuBLAS reference |
+| Metric | v3（最优） | PyTorch reference |
 | --- | --- | --- |
-| Execution Time | 6.75 ms | **6.08 ms** |
-| SM Throughput | 31.8% | 31.8% |
-| Memory Throughput | 45.5% | 46.3% |
-| DRAM Bandwidth | 331 GB/s | 338 GB/s |
+| Execution Time | 9.41 ms | **6.18 ms** |
+| SM Throughput | 72.6% | 72.5% |
+| Memory Throughput | 74.0% | 74.3% |
+| DRAM Bandwidth | 539 GB/s | 541 GB/s |
 | Achieved Occupancy | 32.7% | 32.7% |
 
-v3 与 cuBLAS Execution Time 相差约 **11%**，硬件利用率几乎完全一致——差距不在 kernel 效率，而在 cuBLAS 更精细的 register / warp 调度策略上。
+v3 与 PyTorch（cuBLAS）Execution Time 相差约 **1.52×**，硬件利用率几乎完全一致——差距不在 kernel 效率，而在 cuBLAS 更精细的 ILP 和指令调度策略上。

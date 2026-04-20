@@ -1,38 +1,38 @@
-# CUDA Optimization Final Report — `softmax` (`2026-04-20`)
+# CUDA Optimization Final Report — `softmax` (2026-04-20)
 
 ## Environment
 
 | Item | Value |
 |---|---|
 | GPU | NVIDIA RTX A6000 (CC 8.6) |
-| CUDA / nvcc | 12.6 (Build cuda_12.6.r12.6/compiler.35059454_0) |
+| CUDA / nvcc | 12.6 / V12.6.85 |
 | ncu | 2024.3.2.0 (build 34861637) |
 | nsight-python | 0.9.6 |
 | PyTorch | 2.11.0+cu126 |
-| Kernel file | `/home/kernel-opt-skill/test/softmax.cu` |
+| Kernel file | `demo/softmax/v3/v3.cu` |
 
 ---
 
 ## Version Iteration Comparison
 
-| Metric | v0 (baseline) | v1 | v2 | v3 | best |
-|---|---|---|---|---|---|
-| Execution Time (ns) | 891,936 | 124,896 | 131,424 | 127,808 | **v1** |
-| Speedup (×) | 1.00 | **7.14** | 6.79 | 6.98 | 7.14× |
-| Memory Throughput (%) | 32.3 | **92.3** | 90.1 | 90.4 | v1 |
-| Compute Throughput (SM %) | 2.9 | 33.0 | 31.1 | 21.2 | v1 |
-| DRAM Total BW (GB/s) | 235 | **673** | 657 | 659 | v1 |
-| Bottleneck | Latency-Bound | Memory-Bound | Memory-Bound | Memory-Bound | — |
-| Achieved Occupancy (%) | 16.6 | 94.8 | 85.4 | **96.9** | v3 (but v1 is fastest) |
-| Waves / SM | 0.08 | 20.3 | 20.3 | 20.3 | — |
-| Registers / Thread | 38 | 40 | 32 | 40 | — |
-| Static Shared Mem (bytes) | 0 | 32 | 64 | 32 | — |
-| Warp Stall — Long SB (%) | 46.3 | 18.0 | 20.3 | 24.5 | v1 |
-| Warp Stall — Barrier (%) | 0.0 | 6.5 | 5.9 | 11.3 | v0/v2 |
-| Branch Divergence (%) | 0.0 | 0.0 | 0.0 | 0.0 | — |
-| Global Load Efficiency (%) | 12.5 | **100** | **100** | **100** | tied |
-| L1 Hit Rate (%) | 91.3 | 54.0 | 21.1 | 53.3 | — |
-| Issue Slot Utilization (%) | 3.9 | 28.8 | 33.0 | 22.5 | v2 |
+| Metric | v0 (baseline) | v1 | v2 | v3 (best) |
+|---|---|---|---|---|
+| Execution Time (ms) | 0.8992 | 0.2219 | 0.1515 | **0.1424** |
+| Speedup (×) | 1.00 | 4.05× | 5.93× | **6.32×** |
+| Memory Throughput (%) | 33.2 | 81.9 | 90.0 | **91.4** |
+| Compute Throughput (%) | 3.0 | 16.8 | 28.4 | 30.9 |
+| Bottleneck | Latency-Bound | Memory-Bound | Memory-Bound | Memory-Bound |
+| Achieved Occupancy (%) | 16.6 | 87.5 | 88.0 | **97.0** |
+| Registers / Thread | 38 | 21 | 28 | 24 |
+| Warp Stall — Long SB (%) | 46.2 | 52.5 | 23.2 | **19.4** |
+| Warp Stall — Short SB (%) | 1.3 | 1.2 | 0.7 | 2.1 |
+| Warp Stall — Barrier (%) | 0.0 | 7.4 | 5.7 | 7.3 |
+| Global Load Efficiency (%) | 12.5 | 100.0 | 100.0 | 100.0 |
+| Global Store Efficiency (%) | 12.5 | 100.0 | 100.0 | 100.0 |
+| L1 Hit Rate (%) | 91.8 | 43.7 | 21.5 | 0.0 |
+| L2 Hit Rate (%) | 84.2 | 62.2 | 54.7 | 50.1 |
+| Shared Memory BW (bytes/s) | 0 | 5.92e9 | 1.56e10 | **1.02e12** |
+| Branch Divergence (%) | 0 | 0 | 0 | 0 |
 
 ---
 
@@ -40,42 +40,43 @@
 
 | Strategy | v1 | v2 | v3 |
 |---|---|---|---|
-| Block-per-row (coalesced global access) | ✓ | ✓ | ✓ |
-| Warp shuffle reduction | ✓ | ✓ | ✓ |
-| Shared memory for warp-level broadcast | ✓ | ✓ | ✓ |
-| `__ldg` / `__restrict__` hints | ✓ | ✓ | ✓ |
-| `__launch_bounds__` | ✗ | ✗ | ✓ |
+| One block per row (vs one thread per row) | ✓ | ✓ | ✓ |
+| Coalesced global memory access | ✓ | ✓ | ✓ |
+| Warp shuffle reduction (`__shfl_xor_sync`) | ✓ | ✓ | ✓ |
+| Shared memory for warp → block reduction | ✓ | ✓ | ✓ |
 | Vectorized loads (`float4`) | ✗ | ✓ | ✓ |
-| Online softmax algorithm (2-pass) | ✗ | ✓ | ✗ |
-| `__expf()` fast math | ✗ | ✗ | ✓ |
-| `__fdividef()` | ✓ | ✓ | ✓ |
+| Online softmax (fused max+sum in one pass) | ✗ | ✓ | ✓ |
+| `__ldg` read-only cache | ✗ | ✓ | ✓ |
+| Shared memory row cache (eliminate 2nd DRAM read) | ✗ | ✗ | ✓ |
+| `__launch_bounds__` register hint | ✗ | ✗ | ✓ |
+| Larger block size (256 vs 128) | ✗ | ✓ | ✓ |
 
 **Decision rationale per version:**
 
-- **v1:** Root cause of v0 was one-thread-per-row: each warp's threads accessed different rows (stride D=4096 bytes), yielding 12.5% global load efficiency and only 40 blocks for 108 SMs (0.08 waves/SM, 16.6% occupancy). Fix: block-per-row with 10,240 blocks. All threads in a warp now access consecutive floats in one row (100% coalesced). Warp shuffle + shared memory reduction eliminates the need for global atomics. Result: 7.14× speedup, Memory-Bound at 92.3%.
+- **v1:** v0 assigns one thread per row, causing stride-D strided accesses (12.5% Global Load Efficiency) and only 40 blocks for 84 SMs (16.6% Achieved Occupancy). Switching to one block per row coalesces access to 100%, increases grid to N=10240 blocks (occupancy 87.5%), and uses warp-shuffle + shared-memory reduction. Result: **4.05× speedup** (Latency-Bound → Memory-Bound).
 
-- **v2:** Hypothesis: online softmax (Milakov & Gimelshein) eliminates pass 3 (output read-back) and saves one read of input, reducing logical data movement from 5 passes to 3. Combined with `float4` to reduce instruction count. Reality: v1's pass 3 reads the output from L1 cache (54% L1 hit rate), so actual DRAM savings were minimal. Meanwhile, the online algorithm adds two `expf()` calls per element in pass 1 (running max update), increasing SM compute overhead. The 2× shared memory arrays (smem_m + smem_s) also reduced register budget and occupancy (85.4% vs 94.8%). Net result: 5% slower than v1.
+- **v2:** v1 still makes 3 DRAM passes (max pass → exp+sum pass → normalize pass). Online softmax fuses max+sum into a single pass using the online merge rule `(m,s)+(m',s') → (max(m,m'), s·exp(m−M)+s'·exp(m'−M))`, reducing to 2 DRAM reads + 1 write. float4 loads reduce L1 transaction count by 4×, and 256-thread blocks improve ILP. Stall Long Scoreboard drops from 52.5% to 23.2%. Result: **1.46× speedup over v1, 5.93× over v0**.
 
-- **v3:** Returned to 3-pass approach to preserve v1's L1 cache reuse. Added `float4` vectorized I/O and `__expf()` (fast SFU approximation). However, float4 reduces per-thread loop iterations from 4 to 1 (with D=1024, BLOCK_SIZE=256: D4=256=BLOCK_SIZE → 1 float4 per thread). Fewer iterations mean fewer independent memory requests in flight, reducing the GPU's ability to hide DRAM latency → Long Scoreboard stall rose from 18% to 24.5%. `__expf()` uses SFU units (no FMA), so FMA throughput dropped to 0% and instructions-per-cycle fell. Net result: 2.3% slower than v1.
+- **v3:** v2 still reads DRAM twice (online pass + normalize pass). Caching the entire row (4 KB) into shared memory eliminates the second DRAM read entirely. After a single float4 DRAM→shmem load, all compute accesses shared memory (latency ~20 cycles vs ~400 cycles for DRAM). `__launch_bounds__(256, 4)` reduces register pressure from 28 to 24 per thread, improving occupancy to 97.0%. Shared memory bandwidth rises to 1.02 TB/s. Result: **1.06× speedup over v2, 6.32× over v0**.
 
 ---
 
 ## Best Version Conclusion
 
-**Best version: `v1`** — execution time reduced from **891,936 ns** to **124,896 ns**, speedup **7.14×** over the naive baseline.
+**Best version: `v3`** — execution time reduced from **0.8992 ms** to **0.1424 ms**, total speedup **6.32×**.
 
 Key gains:
-1. **Block-per-row parallelism**: 40 → 10,240 blocks; 0.08 → 20.3 waves/SM; occupancy 16.6% → 94.8%
-2. **Coalesced global memory access**: load efficiency 12.5% → 100%; DRAM utilization 32% → 92.3%
-3. **Warp shuffle reduction**: eliminates shared memory for max/sum reduction (only 32 bytes of smem for warp-level broadcast)
-4. **`__ldg` / `__restrict__`**: read-only L1 cache hints reduce L2 pressure
+1. **Parallelism fix** (v0→v1): one block per row restored coalesced access and enabled full GPU occupancy — single largest gain (4×)
+2. **Online softmax + float4** (v1→v2): fused reduction pass eliminated one DRAM read, vectorized loads reduced transaction count — 1.46×
+3. **Shared memory row cache** (v2→v3): eliminated the second DRAM read entirely, achieving minimum possible DRAM traffic (1 read + 1 write = 80 MB) — 1.06×
 
-Stopping reason: maximum iterations (N=3) reached.
+Stopping reason: maximum iterations (N=3) reached. Memory throughput is at 91.4% of hardware peak; the kernel is effectively saturating the DRAM bandwidth of the RTX A6000.
+
+**vs PyTorch (benchmark):** v3 runs in 0.1469 ms vs PyTorch's 0.2721 ms — **1.85× faster** than the framework's optimized implementation at equal memory throughput (~92%), confirming we achieve optimal DRAM utilization.
 
 **Remaining optimization opportunities:**
+- Use `cp.async` (Ampere) to pipeline the shmem load phase and overlap it with computation from the previous block's work (persistent kernel pattern)
+- Explore `__half2` (FP16) for reduced memory bandwidth if precision allows
+- For variable D at runtime, add a code path for D < 128 using pure warp-shuffle without shared memory
+- Grid-stride persistent kernel to reduce launch overhead across batches
 
-- **Larger D values (D ≥ 2048)**: with more elements per row, each thread would iterate more in the inner loops, providing better ILP for latency hiding. The scalar 3-pass approach would benefit even more, and `float4` would then provide a meaningful speedup by reducing instruction count without hurting ILP.
-- **Warp-level softmax (D ≤ 32)**: for very short rows, use a single warp per row with only warp-shuffle reductions and no shared memory.
-- **`cp.async` prefetching** (Ampere-native): issue async loads for the next tile while computing on the current tile to better overlap computation and memory access.
-- **Reducing __syncthreads() count**: fuse the two-level reduction into a single barrier using Cooperative Groups or minimize sync points with a tuned block size where all warp sums fit in a single warp's shuffle.
-- **Half-precision (FP16) output**: if the downstream consumer accepts FP16, converting during the final write halves write bandwidth.
