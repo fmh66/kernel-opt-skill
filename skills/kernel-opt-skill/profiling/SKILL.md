@@ -1,9 +1,9 @@
 ---
-name: profiling-skill
+name: profiling
 description: Validate CUDA kernel correctness and collect NCU profiles; interpret NCU metrics to classify bottlenecks. All scripts require a pre-compiled .so file.
 ---
 
-# Profiling & NCU 解读
+# profiling-skill
 
 ## 目录结构
 

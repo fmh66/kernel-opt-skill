@@ -39,10 +39,10 @@ flowchart TD
 
 | sub-skill | location | 职责 |
 |---|---|---|
-| env-skill | `env/SKILL.md` | 必要环境检查 + 环境配置 |
-| profiling-skill | `profiling/SKILL.md` | 正确性检查 + NCU 采集 + 指标解读 + 瓶颈定位 |
-| cuda-skill | `cuda/SKILL.md` | CUDA 优化策略 |
-| report-skill | `report/SKILL.md` | 生成优化流程报告 |
+| env | `env/SKILL.md` | 必要环境检查 + 环境配置 |
+| profiling | `profiling/SKILL.md` | 正确性检查 + NCU 采集 + 指标解读 + 瓶颈定位 |
+| cuda | `cuda/SKILL.md` | CUDA 优化策略 |
+| report | `report/SKILL.md` | 生成优化流程报告 |
 
 ---
 

@@ -11,29 +11,29 @@
 
 | Metric | Value |
 |--------|------:|
-| SM Throughput (% of peak) | 2.9986 |
-| Memory Throughput (% of peak) | 33.0687 |
+| SM Throughput (% of peak) | 2.9202 |
+| Memory Throughput (% of peak) | 32.2666 |
 
 ## Memory Workload Analysis
 
 | Metric | Value |
 |--------|------:|
-| DRAM Total Bandwidth (bytes/s) | 2.41e+11 |
-| DRAM Read Bandwidth (bytes/s) | 1.45e+11 |
-| DRAM Write Bandwidth (bytes/s) | 9.63e+10 |
-| L1 Global Load Bandwidth (bytes/s) | 1.16e+12 |
-| L1 Global Store Bandwidth (bytes/s) | 7.72e+11 |
-| L2 Total Bandwidth (bytes/s) | 9.17e+11 |
+| DRAM Total Bandwidth (bytes/s) | 2.35e+11 |
+| DRAM Read Bandwidth (bytes/s) | 1.41e+11 |
+| DRAM Write Bandwidth (bytes/s) | 9.41e+10 |
+| L1 Global Load Bandwidth (bytes/s) | 1.13e+12 |
+| L1 Global Store Bandwidth (bytes/s) | 7.52e+11 |
+| L2 Total Bandwidth (bytes/s) | 9.00e+11 |
 | Global Load Efficiency (%) | 12.5000 |
 | Global Store Efficiency (%) | 12.5000 |
-| L1 Hit Rate (%) | 91.8445 |
-| L2 Hit Rate (%) | 84.2409 |
+| L1 Hit Rate (%) | 91.3183 |
+| L2 Hit Rate (%) | 83.9143 |
 
 ## Compute Workload Analysis
 
 | Metric | Value |
 |--------|------:|
-| FMA Pipe Utilization (% of peak) | 2.0331 |
+| FMA Pipe Utilization (% of peak) | 2.0306 |
 | Tensor Core Utilization (% of peak) | 0.0000 |
 | IPC (instructions per cycle) | 0.0391 |
 
@@ -41,7 +41,7 @@
 
 | Metric | Value |
 |--------|------:|
-| Achieved Occupancy (%) | 16.6019 |
+| Achieved Occupancy (%) | 16.6060 |
 | Theoretical Occupancy (%) | 100.0000 |
 
 ## Launch Statistics
@@ -59,20 +59,20 @@
 
 | Metric | Value |
 |--------|------:|
-| Issue Slot Utilization (% of peak) | 3.9155 |
-| Eligible Warps / Cycle | 0.0394 |
+| Issue Slot Utilization (% of peak) | 3.9107 |
+| Eligible Warps / Cycle | 0.0393 |
 
 ## Warp State / Stall Reasons
 
 | Metric | Value |
 |--------|------:|
 | Stall: Barrier | 0.0000 |
-| Stall: Long Scoreboard | 46.2412 |
-| Stall: Short Scoreboard | 1.3225 |
+| Stall: Long Scoreboard | 46.3153 |
+| Stall: Short Scoreboard | 1.3226 |
 | Stall: Math Pipe Throttle | 0.0005 |
-| Stall: Wait | 1.8614 |
-| Stall: No Instruction | 0.1034 |
-| Stall: Not Selected | 0.0054 |
+| Stall: Wait | 1.8615 |
+| Stall: No Instruction | 0.1035 |
+| Stall: Not Selected | 0.0055 |
 
 ## Branch Divergence
 
@@ -85,18 +85,18 @@
 
 | Metric | Value |
 |--------|------:|
-| FADD Throughput (per cycle) | 18.9691 |
-| FMUL Throughput (per cycle) | 6.3230 |
-| FFMA Throughput (per cycle) | 56.9073 |
-| LSU Pipe Utilization (% of peak) | 1.2453 |
+| FADD Throughput (per cycle) | 18.4798 |
+| FMUL Throughput (per cycle) | 6.1599 |
+| FFMA Throughput (per cycle) | 55.4393 |
+| LSU Pipe Utilization (% of peak) | 1.2437 |
 | Warp Execution Efficiency | 32.0000 |
-| L1 Bank Conflicts (total) | 4.30e+07 |
+| L1 Bank Conflicts (total) | 4.29e+07 |
 | Shared Memory Bandwidth (bytes/s) | 0.0000 |
 
 ## Kernel Runtime
 
 | Metric | Value |
 |--------|------:|
-| Kernel Duration (ns) | 869184.0000 |
+| Kernel Duration (ns) | 891936.0000 |
 
 **Kernel name:** `naive_softmax`

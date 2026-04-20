@@ -1,5 +1,5 @@
 ---
-name: report-skill
+name: report
 description: Generate the final CUDA kernel optimization report (final_report.md) after all iterations complete. Aggregates env, NCU metrics, strategy decisions, and best-version selection across all versions into a single structured Markdown document.
 ---
 

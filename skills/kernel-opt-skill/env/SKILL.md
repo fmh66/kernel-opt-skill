@@ -1,9 +1,9 @@
 ---
-name: env-skill
+name: env
 description: Environment readiness check and configuration for CUDA kernel optimization.
 ---
 
-# env
+# env-skill
 
 ## 目录结构
 

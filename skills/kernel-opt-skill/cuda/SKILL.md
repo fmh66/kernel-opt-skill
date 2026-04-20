@@ -1,9 +1,9 @@
 ---
-name: cuda-skill
+name: cuda
 description: CUDA optimization strategies by bottleneck type. Assumes bottleneck has been classified by profiling/SKILL.md.
 ---
 
-# CUDA 优化策略
+# cuda-skill
 
 ## 目录结构
 

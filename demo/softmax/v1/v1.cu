@@ -1,75 +1,80 @@
 #include <cuda_runtime.h>
 #include <cfloat>
 
-// One block per row: improves occupancy (N blocks vs N/256 blocks)
-// and enables coalesced memory access (consecutive threads -> consecutive elements in same row).
-// Warp shuffle reduces max/sum without shared memory bank conflicts.
-__global__ void softmax_v1(const float* __restrict__ input, float* __restrict__ output,
-                           int N, int D) {
-    int row = blockIdx.x;
+static __device__ __forceinline__ float warp_reduce_max(float val) {
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1)
+        val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
+    return val;
+}
+
+static __device__ __forceinline__ float warp_reduce_sum(float val) {
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1)
+        val += __shfl_down_sync(0xffffffff, val, offset);
+    return val;
+}
+
+// One block per row; coalesced loads; warp-shuffle + shared-mem reduction
+template <int BLOCK_SIZE>
+__global__ void softmax_block_per_row(
+    const float* __restrict__ input,
+    float* __restrict__ output,
+    int N, int D)
+{
+    const int row = blockIdx.x;
     if (row >= N) return;
 
-    const float* in_row  = input  + (long)row * D;
-    float*       out_row = output + (long)row * D;
+    constexpr int NUM_WARPS = BLOCK_SIZE / 32;
+    const int tid    = threadIdx.x;
+    const int warpId = tid >> 5;
+    const int laneId = tid & 31;
 
-    // ---- pass 1: find max (coalesced strided load) ----
-    float max_val = -FLT_MAX;
-    for (int i = threadIdx.x; i < D; i += blockDim.x)
-        max_val = fmaxf(max_val, in_row[i]);
+    __shared__ float smem[NUM_WARPS];
 
-    // warp-level reduce max
-    for (int off = 16; off > 0; off >>= 1)
-        max_val = fmaxf(max_val, __shfl_down_sync(0xffffffff, max_val, off));
+    const float* in_row  = input  + (long long)row * D;
+    float*       out_row = output + (long long)row * D;
 
-    __shared__ float smem[32];
-    int wid = threadIdx.x >> 5;   // threadIdx.x / 32
-    int lid = threadIdx.x & 31;   // threadIdx.x % 32
+    // Pass 1: thread-local max
+    float tmax = -FLT_MAX;
+    for (int i = tid; i < D; i += BLOCK_SIZE)
+        tmax = fmaxf(tmax, __ldg(in_row + i));
 
-    if (lid == 0) smem[wid] = max_val;
+    // Warp reduce → block reduce
+    tmax = warp_reduce_max(tmax);
+    if (laneId == 0) smem[warpId] = tmax;
     __syncthreads();
-
-    // block-level reduce max (first warp)
-    int n_warps = blockDim.x >> 5;
-    if (wid == 0) {
-        max_val = (lid < n_warps) ? smem[lid] : -FLT_MAX;
-        for (int off = 16; off > 0; off >>= 1)
-            max_val = fmaxf(max_val, __shfl_down_sync(0xffffffff, max_val, off));
-        if (lid == 0) smem[0] = max_val;
-    }
+    tmax = (tid < NUM_WARPS) ? smem[tid] : -FLT_MAX;
+    if (warpId == 0) tmax = warp_reduce_max(tmax);
+    if (tid == 0) smem[0] = tmax;
     __syncthreads();
-    max_val = smem[0];
+    const float row_max = smem[0];
 
-    // ---- pass 2: compute exp, accumulate sum (write to output) ----
-    float sum_val = 0.0f;
-    for (int i = threadIdx.x; i < D; i += blockDim.x) {
-        float e = expf(in_row[i] - max_val);
-        out_row[i] = e;
-        sum_val += e;
+    // Pass 2: exp(x - max), write to output, accumulate sum
+    float tsum = 0.0f;
+    for (int i = tid; i < D; i += BLOCK_SIZE) {
+        float val = expf(__ldg(in_row + i) - row_max);
+        out_row[i] = val;
+        tsum += val;
     }
 
-    // warp-level reduce sum
-    for (int off = 16; off > 0; off >>= 1)
-        sum_val += __shfl_down_sync(0xffffffff, sum_val, off);
-
-    if (lid == 0) smem[wid] = sum_val;
+    // Warp reduce → block reduce
+    tsum = warp_reduce_sum(tsum);
+    if (laneId == 0) smem[warpId] = tsum;
     __syncthreads();
-
-    if (wid == 0) {
-        sum_val = (lid < n_warps) ? smem[lid] : 0.0f;
-        for (int off = 16; off > 0; off >>= 1)
-            sum_val += __shfl_down_sync(0xffffffff, sum_val, off);
-        if (lid == 0) smem[0] = sum_val;
-    }
+    tsum = (tid < NUM_WARPS) ? smem[tid] : 0.0f;
+    if (warpId == 0) tsum = warp_reduce_sum(tsum);
+    if (tid == 0) smem[0] = tsum;
     __syncthreads();
-    sum_val = smem[0];
+    const float inv_sum = __fdividef(1.0f, smem[0]);
 
-    // ---- pass 3: normalize ----
-    float inv_sum = __fdividef(1.0f, sum_val);
-    for (int i = threadIdx.x; i < D; i += blockDim.x)
+    // Pass 3: normalize
+    for (int i = tid; i < D; i += BLOCK_SIZE)
         out_row[i] *= inv_sum;
 }
 
 extern "C" void solve(float* input, float* output, int N, int D) {
-    softmax_v1<<<N, 256>>>(input, output, N, D);
+    constexpr int BLOCK_SIZE = 256;
+    softmax_block_per_row<BLOCK_SIZE><<<N, BLOCK_SIZE>>>(input, output, N, D);
     cudaDeviceSynchronize();
 }

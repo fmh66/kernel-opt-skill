@@ -1,7 +1,6 @@
 import torch
+import torch.nn.functional as F
 
-
-def reference(input: torch.Tensor, output: torch.Tensor, N: int, D: int) -> None:
-    x = input.view(N, D)
-    result = torch.softmax(x.float(), dim=-1)
-    output.copy_(result.flatten())
+def reference(input, output, N, D, **kwargs):
+    result = F.softmax(input.reshape(N, D).float(), dim=-1).reshape(-1)
+    output.copy_(result)

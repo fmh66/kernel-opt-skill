@@ -1,86 +1,96 @@
 #include <cuda_runtime.h>
 #include <cfloat>
 
-// v3: Online softmax (Milakov & Gimelshein 2018) - 2-pass instead of 3-pass.
-// Pass 1: Single forward scan over input computes (max, sum) simultaneously using
-//         the running-max rescaling trick — avoids the separate max pass.
-//         Result: no intermediate exp values written to output.
-// Pass 2: Re-read input (hits L1 cache), write final normalized output.
-// + float4 vectorized loads/stores throughout
-// + __expf for fast transcendentals
-// + #pragma unroll for inner loops
+static __device__ __forceinline__ float warp_reduce_max(float val) {
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1)
+        val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
+    return val;
+}
 
-__global__ __launch_bounds__(256, 6)
-void softmax_v3(const float* __restrict__ input, float* __restrict__ output,
-                int N, int D) {
-    int row = blockIdx.x;
+static __device__ __forceinline__ float warp_reduce_sum(float val) {
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1)
+        val += __shfl_down_sync(0xffffffff, val, offset);
+    return val;
+}
+
+// v3: 3-pass (preserves L1 cache reuse) + float4 vectorized I/O + __expf fast math
+//   Pass 1: float4 loads → row max
+//   Pass 2: float4 loads → exp, float4 stores, accumulate sum
+//   Pass 3: float4 loads from L1-cached output → multiply inv_sum, float4 stores
+template <int BLOCK_SIZE>
+__global__ __launch_bounds__(BLOCK_SIZE)
+void softmax_vec4_fast(
+    const float* __restrict__ input,
+    float* __restrict__ output,
+    int N, int D)
+{
+    const int row = blockIdx.x;
     if (row >= N) return;
 
-    const float4* in4  = reinterpret_cast<const float4*>(input  + (long)row * D);
-    float4*       out4 = reinterpret_cast<float4*>      (output + (long)row * D);
+    constexpr int NUM_WARPS = BLOCK_SIZE / 32;
+    const int tid    = threadIdx.x;
+    const int warpId = tid >> 5;
+    const int laneId = tid & 31;
 
-    int D4 = D >> 2;
+    __shared__ float smem[NUM_WARPS];
 
-    // ---- pass 1: online max + sum (no intermediate store) ----
-    float m = -FLT_MAX, d = 0.0f;
+    const int D4 = D >> 2;
+    const float4* in4  = reinterpret_cast<const float4*>(input  + (long long)row * D);
+    float4*       out4 = reinterpret_cast<float4*>      (output + (long long)row * D);
 
-    for (int i = threadIdx.x; i < D4; i += blockDim.x) {
-        float4 v = in4[i];
-        float vals[4] = {v.x, v.y, v.z, v.w};
-        #pragma unroll
-        for (int j = 0; j < 4; j++) {
-            float m_new = fmaxf(m, vals[j]);
-            d = d * __expf(m - m_new) + __expf(vals[j] - m_new);
-            m = m_new;
-        }
+    // Pass 1: find row max via float4 loads
+    float tmax = -FLT_MAX;
+    for (int i = tid; i < D4; i += BLOCK_SIZE) {
+        float4 v = __ldg(in4 + i);
+        tmax = fmaxf(tmax, fmaxf(fmaxf(v.x, v.y), fmaxf(v.z, v.w)));
     }
 
-    // warp-level reduce (m, d) pair
-    for (int off = 16; off > 0; off >>= 1) {
-        float m_o = __shfl_down_sync(0xffffffff, m, off);
-        float d_o = __shfl_down_sync(0xffffffff, d, off);
-        float m_new = fmaxf(m, m_o);
-        d = d * __expf(m - m_new) + d_o * __expf(m_o - m_new);
-        m = m_new;
-    }
-
-    __shared__ float sm[32], sd[32];
-    int wid = threadIdx.x >> 5;
-    int lid = threadIdx.x & 31;
-    int n_warps = blockDim.x >> 5;
-
-    if (lid == 0) { sm[wid] = m; sd[wid] = d; }
+    tmax = warp_reduce_max(tmax);
+    if (laneId == 0) smem[warpId] = tmax;
     __syncthreads();
-
-    if (wid == 0) {
-        m = (lid < n_warps) ? sm[lid] : -FLT_MAX;
-        d = (lid < n_warps) ? sd[lid] : 0.0f;
-        for (int off = 16; off > 0; off >>= 1) {
-            float m_o = __shfl_down_sync(0xffffffff, m, off);
-            float d_o = __shfl_down_sync(0xffffffff, d, off);
-            float m_new = fmaxf(m, m_o);
-            d = d * __expf(m - m_new) + d_o * __expf(m_o - m_new);
-            m = m_new;
-        }
-        if (lid == 0) { sm[0] = m; sd[0] = d; }
-    }
+    tmax = (tid < NUM_WARPS) ? smem[tid] : -FLT_MAX;
+    if (warpId == 0) tmax = warp_reduce_max(tmax);
+    if (tid == 0) smem[0] = tmax;
     __syncthreads();
-    m = sm[0];
-    float inv_d = __fdividef(1.0f, sd[0]);
+    const float row_max = smem[0];
 
-    // ---- pass 2: re-read input (L1 hot), write normalized output ----
-    for (int i = threadIdx.x; i < D4; i += blockDim.x) {
-        float4 v = in4[i];
-        float4 r;
-        r.x = __expf(v.x - m) * inv_d;
-        r.y = __expf(v.y - m) * inv_d;
-        r.z = __expf(v.z - m) * inv_d;
-        r.w = __expf(v.w - m) * inv_d;
-        out4[i] = r;
+    // Pass 2: compute exp(x - max) with fast math, store float4, accumulate sum
+    float tsum = 0.0f;
+    for (int i = tid; i < D4; i += BLOCK_SIZE) {
+        float4 v = __ldg(in4 + i);
+        float4 e;
+        e.x = __expf(v.x - row_max);
+        e.y = __expf(v.y - row_max);
+        e.z = __expf(v.z - row_max);
+        e.w = __expf(v.w - row_max);
+        out4[i] = e;
+        tsum += (e.x + e.y) + (e.z + e.w);
+    }
+
+    tsum = warp_reduce_sum(tsum);
+    if (laneId == 0) smem[warpId] = tsum;
+    __syncthreads();
+    tsum = (tid < NUM_WARPS) ? smem[tid] : 0.0f;
+    if (warpId == 0) tsum = warp_reduce_sum(tsum);
+    if (tid == 0) smem[0] = tsum;
+    __syncthreads();
+    const float inv_sum = __fdividef(1.0f, smem[0]);
+
+    // Pass 3: normalize, reading back exp values from L1-cached output
+    for (int i = tid; i < D4; i += BLOCK_SIZE) {
+        float4 e = out4[i];
+        e.x *= inv_sum;
+        e.y *= inv_sum;
+        e.z *= inv_sum;
+        e.w *= inv_sum;
+        out4[i] = e;
     }
 }
 
 extern "C" void solve(float* input, float* output, int N, int D) {
-    softmax_v3<<<N, 256>>>(input, output, N, D);
+    constexpr int BLOCK_SIZE = 256;
+    softmax_vec4_fast<BLOCK_SIZE><<<N, BLOCK_SIZE>>>(input, output, N, D);
     cudaDeviceSynchronize();
 }
