@@ -1,9 +1,9 @@
 ---
-name: kernel-opter-skill
+name: kernel-opt-skill
 description: Orchestrator for CUDA kernel optimization. Runs environment check, defines the optimization loop (Step 0–7), and routes tasks to sub-skills.
 ---
 
-# kernel-opter-skill
+# kernel-opt-skill
 
 ## 优化流程
 
@@ -54,32 +54,31 @@ flowchart TD
 
 一旦指定最大迭代次数 `N`，后续迭代版本数不可更改，在 `<output_dir>` 中生成 `N+1` 个子目录分别代表不同的版本：
 
-```txt
-|—— <output_dir>
-    |—— ref.py
-    |—— env_check.md
-    |—— v0
-        |—— correctness.md
-        |—— ncu_summary.md
-        |—— ncu_details.md
-        |—— v0.cu
-    |—— v1
-        |—— correctness.md
-        |—— ncu_summary.md
-        |—— ncu_details.md
-        |—— v1.cu
-    |—— v2
-        |—— correctness.md
-        |—— ncu_summary.md
-        |—— ncu_details.md
-        |—— v2.cu
-    |—— v3
-        |—— correctness.md
-        |—— ncu_summary.md
-        |—— ncu_details.md
-        |—— v3.cu
-    |——final_report.md
-    ...
+```text
+<output_dir>/
+├── ref.py
+├── env_check.md
+├── v0/
+│   ├── correctness.md
+│   ├── ncu_summary.md
+│   ├── ncu_details.md
+│   └── v0.cu
+├── v1/
+│   ├── correctness.md
+│   ├── ncu_summary.md
+│   ├── ncu_details.md
+│   └── v1.cu
+├── v2/
+│   ├── correctness.md
+│   ├── ncu_summary.md
+│   ├── ncu_details.md
+│   └── v2.cu
+├── v3/
+│   ├── correctness.md
+│   ├── ncu_summary.md
+│   ├── ncu_details.md
+│   └── v3.cu
+└── final_report.md
 ```
 
 `v0` 为初始未优化版本，`v1` 表示第一次优化，`v2` 表示第二次优化，`v3` 表示第三次优化，以此类推
