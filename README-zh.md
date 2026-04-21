@@ -66,79 +66,12 @@ flowchart TD
 └── benchmark.md            # 最优版本与 reference 的性能横向对比
 ```
 
-## Benchmark 对比
-
-优化循环结束后，benchmark-skill 自动将 **best version** 与 **reference implementation（PyTorch / CUTLASS）** 进行横向性能对比：
-
-| 维度 | 方式 | 说明 |
-| --- | --- | --- |
-| Execution Time | CUDA Events（100 次迭代） | 真实 wall-clock latency，不受 nsight replay 干扰 |
-| SM Throughput / Memory Throughput | nsight-python | 硬件利用率 vs peak |
-| DRAM Bandwidth | nsight-python | 实际 Memory Bandwidth 绝对值 |
-| Achieved Occupancy | nsight-python | Active warp 占比，反映并行度 |
-
-结果写入 `<output_dir>/benchmark.md`。
-
 ## 实战案例
 
-### Softmax 优化
+完整的优化过程（源码、NCU 指标、每轮决策分析、Benchmark）见 [demo/DEMO.md](demo/DEMO.md)。
 
-参见 [demo/softmax/](demo/softmax/) 目录，完整记录了从基线到最优版本的 4 轮迭代过程。
-
-| 版本 | Execution Time | Speedup | Bottleneck | 关键优化 |
-| --- | --- | --- | --- | --- |
-| v0（基线） | 891,936 ns | 1.00× | Latency-Bound | 朴素实现（1 thread/行） |
-| v1 | **124,896 ns** | **7.14×** | Memory-Bound | 1 block/行 + Warp Shuffle |
-| v2 | 131,424 ns | 6.79× | Memory-Bound | Online Softmax + float4（L1 reuse 失效，性能下降） |
-| v3 | 127,808 ns | 6.98× | Memory-Bound | 3-pass + float4 + `__expf__`（ILP 下降，性能下降） |
-
-**v1 关键改进（最优版本）：**
-
-- Block 分配策略从 1 thread/行改为 1 block/行，Block 数 40 → 10,240，Achieved Occupancy 16.6% → 94.8%
-- Global Load Efficiency 从 12.5% 提升至 100%（coalesced access），DRAM Bandwidth 235 → 673 GB/s
-- 使用 Warp Shuffle reduce，仅需 32 字节 Shared Memory 即可完成 max/sum broadcast，无需全局 atomic 操作
-- `__ldg` / `__restrict__` read-only cache hint，减少 L2 访问压力
-
-**Benchmark：v1 vs PyTorch reference（N=10240, D=1024）**
-
-| Metric | v1（最优） | PyTorch reference |
-| --- | --- | --- |
-| Execution Time | **0.1465 ms** | 0.2657 ms |
-| SM Throughput | 33.3% | 32.8% |
-| Memory Throughput | 91.6% | 91.8% |
-| DRAM Bandwidth | 668 GB/s | 669 GB/s |
-| Achieved Occupancy | 93.0% | 93.2% |
-
-v1 Execution Time 比 PyTorch 快 **1.81×**，硬件利用率几乎持平——说明两者已同等充分利用 Memory Bandwidth，性能差距来自 PyTorch 的 dispatch overhead 而非 kernel 本身的效率差异。
-
-### GEMM 优化
-
-参见 [demo/gemm/](demo/gemm/) 目录，完整记录了从基线到最优版本的 3 轮迭代过程。
-
-| 版本 | Execution Time | Speedup | Bottleneck | 关键优化 |
-| --- | --- | --- | --- | --- |
-| v0（基线） | 64.23 ms | 1.00× | Latency-Bound | 朴素实现（non-coalesced access，无共享内存） |
-| v1 | 47.88 ms | 1.34× | Latency-Bound | Shared Memory Tiling（32×32） |
-| v2 | 11.64 ms | 5.52× | Balanced | 2D 寄存器分块（每线程 4×4，64×64 tile，BK=8） |
-| v3 | **9.43 ms** | **6.81×** | Balanced | BK 加倍 + TM=8 + smem padding + float4 store |
-
-**v3 关键改进（最优版本）：**
-
-- K-tile 加倍（BK: 8→16），每轮 tile 计算量翻倍（BK×TM×TN = 16×8×4 = 512 FMA），__syncthreads() 频率减半
-- 线程 tile 加深（TM: 4→8），寄存器级数据复用增强，IPC 0.52 → 0.72，Issue Slot 52% → 72%
-- 共享内存 padding（`sA[BK][BM+1]`），奇数列步长打破 stride-TM bank conflict，L1 Bank Conflicts 降低 5×
-- Float4 向量化 C 写出，Global Store Efficiency 25% → 100%
-- FMA Pipe Utilization 38.58% → 55.81%，所有 stall 指标大幅下降（Long SB: 3.01→0.88，Short SB: 2.97→0.15，Barrier: 1.99→0.43）
-- 代价：每线程 122 个 register，Achieved Occupancy 从 65.25% 降至 32.69%
-
-**Benchmark：v3 vs PyTorch reference（M=K=N=4096）**
-
-| Metric | v3（最优） | PyTorch reference |
-| --- | --- | --- |
-| Execution Time | 9.41 ms | **6.18 ms** |
-| SM Throughput | 72.6% | 72.5% |
-| Memory Throughput | 74.0% | 74.3% |
-| DRAM Bandwidth | 539 GB/s | 541 GB/s |
-| Achieved Occupancy | 32.7% | 32.7% |
-
-v3 与 PyTorch（cuBLAS）Execution Time 相差约 **1.52×**，硬件利用率几乎完全一致——差距不在 kernel 效率，而在 cuBLAS 更精细的 ILP 和指令调度策略上。
+| 案例 | 规模 | 最终 Speedup | 最优版本 vs PyTorch |
+| --- | --- | --- | --- |
+| [Softmax](demo/DEMO.md#1-softmax) | N=10240, D=1024 | **6.32×** | 1.85× 快于 PyTorch |
+| [GEMM](demo/DEMO.md#2-gemm) | M=K=N=4096 | **6.81×** | 1.52× 慢于 cuBLAS |
+| [MHA](demo/DEMO.md#3-mha) | N=1024, d=512, h=8 | **10.23×** | 2.86× 慢于 Flash Attention |

@@ -358,7 +358,7 @@ def _build_md(solution_file, ref_file, gpu_name, arch, dim_values, ptr_elems,
     lines = [
         "# Correctness Check",
         "",
-        "| | |",
+        "| Field | Value |",
         "|---|---|",
         f"| **Kernel** | {os.path.basename(solution_file)} |",
         f"| **Reference** | {os.path.basename(ref_file)} |",
