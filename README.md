@@ -1,6 +1,6 @@
 # kernel-opt-skill
 
-A CUDA kernel optimization skill that systematically profiles, identifies bottlenecks, and iteratively improves kernel performance.
+A CUDA/Triton kernel optimization skill that systematically profiles, identifies bottlenecks, and iteratively improves kernel performance.
 
 [中文文档](README-zh.md)
 
@@ -14,6 +14,7 @@ A CUDA kernel optimization skill that systematically profiles, identifies bottle
 | Python | 3.10+ |
 | PyTorch | 2.0+ |
 | nsight-python | 0.9.6+ |
+| Triton | 2.0+ |
 
 ## Project Structure
 
@@ -25,6 +26,7 @@ kernel-opt-skill/
 │   ├── profiling/                # NCU profiling & correctness verification
 │   ├── benchmark/                # Solution vs reference framework comparison
 │   ├── cuda/                     # Memory / compute / latency optimization references
+│   ├── triton/                   # Triton optimization references
 │   └── report/                   # Report generation templates
 └── demo/                         # Optimization case studies (softmax, gemm, ...)
 ```
@@ -35,6 +37,85 @@ Invoke the skill with your kernel file, iteration count, and output directory:
 
 ```text
 /kernel-opt-skill Please optimize this kernel <kernel.cu>, run 3 iterations, output to <output_dir>
+```
+
+### Minimal CUDA / Triton Templates
+
+#### CUDA (`.cu`)
+
+> Note: profiling scripts load the matching shared library and call `extern "C" void solve(...)`.
+
+```cpp
+#include <cuda_runtime.h>
+
+__global__ void kernel(
+    const float* in0, const float* in1, float* out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        // TODO: replace with your kernel logic
+        out[i] = in0[i] + in1[i];
+    }
+}
+
+extern "C" void solve(
+    float* in0, float* in1, float* out, int n) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    kernel<<<blocks, threads>>>(in0, in1, out, n);
+    cudaDeviceSynchronize();
+}
+```
+
+#### Triton (`.py`)
+
+> Note: profiling scripts require both `setup(**kwargs)` and `run_kernel(**kwargs)`.
+
+```python
+import torch
+import triton
+import triton.language as tl
+
+@triton.jit
+def _kernel(
+    x_ptr, y_ptr, out_ptr, n,
+    BLOCK: tl.constexpr,
+):
+    pid = tl.program_id(axis=0)
+    offs = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offs < n
+    x = tl.load(x_ptr + offs, mask=mask, other=0.0)
+    y = tl.load(y_ptr + offs, mask=mask, other=0.0)
+    tl.store(out_ptr + offs, x + y, mask=mask)
+
+def setup(n=1024, seed=42, **kwargs):
+    torch.manual_seed(seed)
+    x = torch.randn((n,), device="cuda", dtype=torch.float32)
+    y = torch.randn((n,), device="cuda", dtype=torch.float32)
+    out = torch.empty((n,), device="cuda", dtype=torch.float32)
+    return {
+        "inputs": {"x": x, "y": y, "out": out, "n": n},
+        "outputs": ["out"],
+    }
+
+def run_kernel(**kwargs):
+    x, y, out = kwargs["x"], kwargs["y"], kwargs["out"]
+    n = int(kwargs["n"])
+    grid = lambda meta: (triton.cdiv(n, meta["BLOCK"]),)
+    _kernel[grid](x, y, out, n, BLOCK=256)
+```
+
+#### Reference (`ref.py`)
+
+> Note: correctness/benchmark calls `reference(**kwargs)` as the baseline implementation.
+
+```python
+import torch
+
+def reference(**kwargs):
+    x = kwargs["x"]
+    y = kwargs["y"]
+    out = kwargs["out"]
+    out.copy_(x + y)
 ```
 
 The optimization loop runs automatically:
@@ -57,7 +138,7 @@ flowchart TD
 ├── ref.py                  # Reference implementation
 ├── env_check.md            # Environment info
 ├── v0/
-│   ├── v0.cu               # Source code
+│   ├── v0.cu / v0.py       # Source code (CUDA / Triton)
 │   ├── correctness.md      # Correctness verification result
 │   ├── ncu_summary.md      # NCU metrics summary (LLM-friendly)
 │   └── ncu_details.md      # Full NCU metrics table

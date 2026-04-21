@@ -8,6 +8,7 @@
 | CUDA / nvcc | `<version>` |
 | ncu | `<version>` |
 | nsight-python | `<version>` |
+| Triton | `<version>` |
 | PyTorch | `<version>` |
 | Kernel file | `<path>` |
 

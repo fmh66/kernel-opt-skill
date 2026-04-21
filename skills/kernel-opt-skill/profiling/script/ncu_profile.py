@@ -18,15 +18,11 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 from correctness_check import (
     detect_arch,
-    parse_solve_signature,
-    _setup_cuda,
+    _parse_dim_values,
+    _setup_backend,
 )
 
-try:
-    import nsight
-except ImportError:
-    print("nsight-python is not installed. Install with: pip install nsight-python", file=sys.stderr)
-    sys.exit(1)
+import nsight
 
 # NCU metrics (replace --section / --set flags)
 CORE_METRICS = []
@@ -167,22 +163,26 @@ METRIC_LABELS = {
 _kernel_state = None
 
 
-def _get_kernel_state(solution_file, dim_values, ptr_size, arch, seed):
+def _get_kernel_state(solution_file, backend, dim_values, ptr_size, arch, seed):
     global _kernel_state
     if _kernel_state is None:
-        _kernel_state = _setup_cuda(
-            solution_file, dim_values, ptr_size, arch,
+        _kernel_state = _setup_backend(
+            solution_file=solution_file,
+            backend_hint=backend,
+            dim_values=dim_values,
+            ptr_size_override=ptr_size,
+            arch=arch,
             seed=seed,
         )
     return _kernel_state
 
 
 
-def time_kernel(solution_file, dim_values, ptr_size, arch, seed, warmup, iters=100):
+def time_kernel(solution_file, backend, dim_values, ptr_size, arch, seed, warmup, iters=100):
     """Measure kernel latency with CUDA Events. Returns (mean_ms, std_ms)."""
     import statistics
-    state = _get_kernel_state(solution_file, dim_values, ptr_size, arch, seed)
-    fn = state["callable"]
+    state = _get_kernel_state(solution_file, backend, dim_values, ptr_size, arch, seed)
+    fn = state.callable
 
     for _ in range(warmup):
         fn()
@@ -201,7 +201,7 @@ def time_kernel(solution_file, dim_values, ptr_size, arch, seed, warmup, iters=1
     return statistics.mean(times), (statistics.stdev(times) if len(times) > 1 else 0.0)
 
 
-def run_profile(solution_file, dim_values, ptr_size, arch,
+def run_profile(solution_file, backend, dim_values, ptr_size, arch,
                 seed, warmup, output_dir):
     metrics = list(dict.fromkeys(FULL_METRICS))
 
@@ -214,8 +214,8 @@ def run_profile(solution_file, dim_values, ptr_size, arch,
         cache_control="all",
     )
     def profile_solve(warmup_count):
-        state = _get_kernel_state(solution_file, dim_values, ptr_size, arch, seed)
-        fn = state["callable"]
+        state = _get_kernel_state(solution_file, backend, dim_values, ptr_size, arch, seed)
+        fn = state.callable
         for _ in range(warmup_count):
             fn()
         torch.cuda.synchronize()
@@ -335,7 +335,10 @@ def main():
         description="NCU profiling via nsight-python API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("solution_file", help="Path to CUDA kernel file (.cu)")
+    parser.add_argument("solution_file", help="Path to solution file (.cu or .py)")
+    parser.add_argument("--backend", type=str, default="auto",
+                        choices=["auto", "cuda", "triton"],
+                        help="Backend type for solution file (default: auto)")
     parser.add_argument("--output-dir", type=str, required=True,
                         help="Directory for output files")
     parser.add_argument("--warmup", type=int, default=20,
@@ -349,13 +352,7 @@ def main():
 
     args, unknown = parser.parse_known_args()
 
-    dim_values = {}
-    for item in unknown:
-        if item.startswith("--") and "=" in item:
-            key, val = item[2:].split("=", 1)
-            dim_values[key] = int(val)
-        else:
-            print(f"Warning: ignoring unknown arg '{item}'", file=sys.stderr)
+    dim_values = _parse_dim_values(unknown)
 
     torch.cuda.set_device(args.gpu)
     arch = args.arch if args.arch else detect_arch(args.gpu)
@@ -374,6 +371,7 @@ def main():
     if not under_nsight:
         mean_ms, std_ms = time_kernel(
             solution_file=solution_file,
+            backend=args.backend,
             dim_values=dim_values,
             ptr_size=args.ptr_size,
             arch=arch,
@@ -385,6 +383,7 @@ def main():
     try:
         df = run_profile(
             solution_file=solution_file,
+            backend=args.backend,
             dim_values=dim_values,
             ptr_size=args.ptr_size,
             arch=arch,

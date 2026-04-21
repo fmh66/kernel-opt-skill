@@ -1,6 +1,6 @@
 ---
 name: kernel-opt-skill
-description: Orchestrator for CUDA kernel optimization. Runs environment check, defines the optimization loop (Step 0–7), and routes tasks to sub-skills.
+description: Orchestrator for CUDA/Triton kernel optimization. Runs environment check, defines the optimization loop (Step 0–7), and routes tasks to sub-skills.
 ---
 
 # kernel-opt-skill
@@ -39,10 +39,11 @@ flowchart TD
 
 | sub-skill | location | 职责 |
 |---|---|---|
-| env | `env/SKILL.md` | 必要环境检查 + 环境配置 |
+| env | `env/SKILL.md` | 必要环境检查（含 Triton）+ 环境配置 |
 | profiling | `profiling/SKILL.md` | 正确性检查 + NCU 采集 + 指标解读 + 瓶颈定位 |
 | benchmark | `benchmark/SKILL.md` | solution 与 reference 框架横向对比（执行时间 + 硬件指标） |
 | cuda | `cuda/SKILL.md` | CUDA 优化策略 |
+| triton | `triton/SKILL.md` | Triton 优化策略 |
 | report | `report/SKILL.md` | 生成优化流程报告 |
 
 ---
@@ -88,7 +89,7 @@ flowchart TD
 ### 环境检查和配置（env-skill 负责）
 
 * 环境检查为必要步骤，**不通过则直接退出**并输出问题详情
-* 输出 `<output_dir>/env_check.md`，记录 kernel 优化的环境基础信息，后续所有环境信息均从此文件查询
+* 输出 `<output_dir>/env_check.md`，记录 CUDA/Triton kernel 优化的环境基础信息，后续所有环境信息均从此文件查询
 
 ### Step 0: 正确性检查（profiling-skill 负责）
 
@@ -98,11 +99,11 @@ flowchart TD
 
 ### Step 1: 性能指标采集（profiling-skill 负责）
 
-* 输出 `<output_dir>/v{n}/ncu_summary.md` 和 `<output_dir>/v{n}/ncu_details.md`，其中记录各项指标，是后续 kernel 优化方向的依据
+* 输出 `<output_dir>/v{n}/ncu_summary.md` 和 `<output_dir>/v{n}/ncu_details.md`，其中记录各项指标，是后续 CUDA/Triton kernel 优化方向的依据
 
 ### Step 2: 全局定位（profiling-skill & cuda-skill 负责）
 
-* 根据 NCU 性能指标确定 `Memory-Bound`、`Compute-Bound` 和 `Latency-Bound` 类别，详见 `profiling/SKILL.md`
+* 根据 NCU 性能指标确定 `Memory-Bound`、`Compute-Bound` 和 `Latency-Bound` 类别，驱动 CUDA/Triton 两类实现的下一步优化方向，详见 `profiling/SKILL.md`
 
 ### Step 4: 检查占用率 / Step 5: 分析 Warp 调度 / Step 6: 分析分支发散（profiling-skill & cuda-skill 负责）
 

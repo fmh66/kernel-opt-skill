@@ -1,6 +1,6 @@
 ---
 name: env
-description: Environment readiness check and configuration for CUDA kernel optimization.
+description: Environment readiness check and configuration for CUDA/Triton kernel optimization.
 ---
 
 # env-skill
@@ -21,7 +21,7 @@ env/
 
 | 脚本 | 职责 |
 |---|---|
-| `scripts/env_check.py` | 探测并验证 CUDA 环境，输出 Markdown 报告 |
+| `scripts/env_check.py` | 探测并验证 CUDA/PyTorch/Triton 环境，输出 Markdown 报告 |
 | `scripts/enc_config.py` | GPU 时钟锁定等配置操作 |
 
 ---
@@ -35,6 +35,8 @@ python scripts/env_check.py -o <output_dir>/env_check.md [--gpu 0]
 ```
 
 读取`<output_dir>/env_check.md` 文件获取 kernel 优化的环境基础，后续的所有环境信息在此查询。
+
+该检查会将以下项目作为 required 项进行校验：`PyTorch`、`CUDA runtime`、`nvcc`、`ncu`、`nsight-python`、`triton`。
 
 ### 参数
 

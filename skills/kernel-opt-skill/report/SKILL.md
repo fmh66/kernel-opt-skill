@@ -1,6 +1,6 @@
 ---
 name: report
-description: Generate the final CUDA kernel optimization report (final_report.md) after all iterations complete. Aggregates env, NCU metrics, strategy decisions, and best-version selection across all versions into a single structured Markdown document.
+description: Generate the final CUDA/Triton kernel optimization report (final_report.md) after all iterations complete. Aggregates env, NCU metrics, strategy decisions, and best-version selection across all versions into a single structured Markdown document.
 ---
 
 # report-skill
@@ -26,7 +26,7 @@ report/
 
 | 报告字段 | 读取文件 |
 |---|---|
-| 环境（GPU、CUDA/nvcc、ncu、nsight-python、PyTorch） | `<output_dir>/env_check.md` |
+| 环境（GPU、CUDA/nvcc、ncu、nsight-python、Triton、PyTorch） | `<output_dir>/env_check.md` |
 | 执行时间、Memory/Compute/SM Throughput、Warp Stall、Branch Divergence | `<output_dir>/v{n}/ncu_summary.md` |
 | 占用率、寄存器/线程、Shared Mem/block | `<output_dir>/v{n}/ncu_summary.md` |
 | 瓶颈判定 | `<output_dir>/v{n}/ncu_summary.md`（由 profiling-skill 在 Step 2 写入） |

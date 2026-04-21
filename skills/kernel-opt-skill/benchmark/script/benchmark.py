@@ -5,7 +5,8 @@ Compares performance of a custom CUDA kernel against a reference implementation
 using CUDA event timing and nsight-python hardware metrics.
 
 The reference .py must define `reference(**kwargs)`.
-The solution .cu must expose `extern "C" void solve(...)`.
+CUDA solution: .cu must expose `extern "C" void solve(...)`.
+Triton solution: .py must define `setup(**kwargs)` and `run_kernel(**kwargs)`.
 
 Usage:
     python benchmark.py solution.cu --ref=ref.py --output-dir=./out --M=1024 --N=1024
@@ -15,19 +16,17 @@ Usage:
 import argparse
 import ctypes
 import importlib.util
+import copy
 import os
 import re
 import statistics
 import sys
 from pathlib import Path
+from dataclasses import dataclass
 
 import torch
 
-try:
-    import nsight
-except ImportError:
-    print("nsight-python is not installed. Install with: pip install nsight-python", file=sys.stderr)
-    sys.exit(1)
+import nsight
 
 # ---------------------------------------------------------------------------
 # Type tables for parsing extern "C" void solve(...)
@@ -66,6 +65,15 @@ _CTYPE_MAP = {
 }
 
 _INT_TYPES = {"int", "long", "size_t", "unsigned int"}
+
+
+@dataclass
+class BackendState:
+    backend: str
+    callable: object
+    tensors: dict
+    ref_inputs: dict
+    output_names: list
 
 # ---------------------------------------------------------------------------
 # Helpers (self-contained, no cross-skill imports)
@@ -114,6 +122,44 @@ def _load_reference(ref_file):
     if not hasattr(mod, "reference"):
         raise AttributeError(f"'{ref_file}' must define reference(**kwargs)")
     return mod
+
+
+def _load_python_module(module_file, module_name):
+    spec = importlib.util.spec_from_file_location(module_name, module_file)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _clone_value(value):
+    if isinstance(value, torch.Tensor):
+        return value.clone()
+    return copy.deepcopy(value)
+
+
+def _parse_dim_values(extra_args):
+    dim_values = {}
+    for item in extra_args:
+        if item.startswith("--") and "=" in item:
+            key, val = item[2:].split("=", 1)
+            dim_values[key] = int(val)
+        else:
+            print(f"Warning: ignoring unknown arg '{item}'", file=sys.stderr)
+    return dim_values
+
+
+def _prepare_reference_call_inputs(ref_inputs, output_names):
+    """Allow references that treat output tensors as flat buffers."""
+    call_inputs = dict(ref_inputs)
+    for name in output_names:
+        value = call_inputs.get(name)
+        if isinstance(value, torch.Tensor) and value.dim() > 1:
+            call_inputs[name] = value.reshape(-1)
+    return call_inputs
+
+
+def _infer_backend(solution_file):
+    return "triton" if os.path.splitext(solution_file)[1].lower() == ".py" else "cuda"
 
 
 def _setup_kernel(cu_file, dim_values, ptr_size_override, arch, seed):
@@ -167,20 +213,70 @@ def _setup_kernel(cu_file, dim_values, ptr_size_override, arch, seed):
     lib.solve.restype = None
     lib.solve.argtypes = argtypes
 
-    return {
-        "callable": lambda: lib.solve(*call_args),
-        "tensors": tensors,
-        "ref_inputs": ref_inputs,
-        "output_names": [n for t, n, c in params if t in _DTYPE_MAP and not c],
-    }
+    return BackendState(
+        backend="cuda",
+        callable=lambda: lib.solve(*call_args),
+        tensors=tensors,
+        ref_inputs=ref_inputs,
+        output_names=[n for t, n, c in params if t in _DTYPE_MAP and not c],
+    )
+
+
+def _setup_triton(py_file, dim_values, seed):
+    module = _load_python_module(py_file, "_triton_kernel_module")
+    if not hasattr(module, "setup"):
+        raise AttributeError(f"'{py_file}' must define setup(**kwargs)")
+    if not hasattr(module, "run_kernel"):
+        raise AttributeError(f"'{py_file}' must define run_kernel(**kwargs)")
+
+    if seed is not None:
+        torch.manual_seed(seed)
+
+    setup_kwargs = dict(dim_values)
+    if "seed" not in setup_kwargs and seed is not None:
+        setup_kwargs["seed"] = seed
+    prepared = module.setup(**setup_kwargs)
+    if not isinstance(prepared, dict):
+        raise TypeError("Triton setup() must return dict with 'inputs' and 'outputs'")
+
+    ref_inputs = prepared.get("inputs")
+    outputs = prepared.get("outputs")
+    if not isinstance(ref_inputs, dict):
+        raise TypeError("Triton setup()['inputs'] must be a dict")
+    if not isinstance(outputs, (list, tuple)):
+        raise TypeError("Triton setup()['outputs'] must be a list/tuple")
+
+    for name in outputs:
+        if name not in ref_inputs:
+            raise ValueError(f"Triton output '{name}' not found in setup()['inputs']")
+        if not isinstance(ref_inputs[name], torch.Tensor):
+            raise TypeError(f"Triton output '{name}' must be a torch.Tensor")
+
+    tensors = {k: v for k, v in ref_inputs.items() if isinstance(v, torch.Tensor)}
+    return BackendState(
+        backend="triton",
+        callable=lambda: module.run_kernel(**ref_inputs),
+        tensors=tensors,
+        ref_inputs=ref_inputs,
+        output_names=list(outputs),
+    )
+
+
+def _setup_solution(solution_file, backend, dim_values, ptr_size_override, arch, seed):
+    resolved = backend if backend != "auto" else _infer_backend(solution_file)
+    if resolved == "cuda":
+        return _setup_kernel(solution_file, dim_values, ptr_size_override, arch, seed)
+    if resolved == "triton":
+        return _setup_triton(solution_file, dim_values, seed)
+    raise ValueError(f"Unsupported backend: {resolved}")
 
 
 def _check_correctness(sol_tensors, ref_inputs_snapshot, ref_fn, output_names,
                        atol=1e-4, rtol=1e-3):
     """Run ref on cloned inputs and compare outputs with torch.allclose."""
-    cloned = {k: v.clone() if isinstance(v, torch.Tensor) else v
-              for k, v in ref_inputs_snapshot.items()}
-    ref_fn(**cloned)
+    cloned = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
+    ref_call_inputs = _prepare_reference_call_inputs(cloned, output_names)
+    ref_fn(**ref_call_inputs)
     torch.cuda.synchronize()
 
     all_pass = True
@@ -217,12 +313,13 @@ METRIC_LABELS = {
 _sol_state = None
 _ref_fn = None
 _ref_inputs = None
+_backend = "auto"
 
 
 def _init_solution(cu_file, dim_values, ptr_size, arch, seed):
     global _sol_state
     if _sol_state is None:
-        _sol_state = _setup_kernel(cu_file, dim_values, ptr_size, arch, seed)
+        _sol_state = _setup_solution(cu_file, _backend, dim_values, ptr_size, arch, seed)
     return _sol_state
 
 
@@ -232,15 +329,12 @@ def _init_ref(ref_file, cu_file, dim_values, ptr_size, arch, seed):
         mod = _load_reference(ref_file)
         _ref_fn = mod.reference
         state = _init_solution(cu_file, dim_values, ptr_size, arch, seed)
-        _ref_inputs = {
-            k: v.clone() if isinstance(v, torch.Tensor) else v
-            for k, v in state["ref_inputs"].items()
-        }
+        _ref_inputs = {k: _clone_value(v) for k, v in state.ref_inputs.items()}
     return _ref_fn, _ref_inputs
 
 
 def _ref_call():
-    _ref_fn(**_ref_inputs)
+    _ref_fn(**_prepare_reference_call_inputs(_ref_inputs, _sol_state.output_names))
 
 # ---------------------------------------------------------------------------
 # Timing & profiling
@@ -353,10 +447,13 @@ def build_report(solution_file, ref_file, dim_values, arch,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Benchmark CUDA kernel vs reference (PyTorch/CUTLASS)",
+        description="Benchmark CUDA/Triton kernel vs reference (PyTorch/CUTLASS)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("solution_file", help="Path to CUDA kernel file (.cu)")
+    parser.add_argument("solution_file", help="Path to solution file (.cu or .py)")
+    parser.add_argument("--backend", type=str, default="auto",
+                        choices=["auto", "cuda", "triton"],
+                        help="Backend type for solution file (default: auto)")
     parser.add_argument("--ref", type=str, required=True,
                         help="Path to reference .py defining reference(**kwargs)")
     parser.add_argument("--output-dir", type=str, required=True,
@@ -377,14 +474,10 @@ def main():
                         help="Skip nsight hardware profiling; only run CUDA event timing")
 
     args, unknown = parser.parse_known_args()
+    global _backend
+    _backend = args.backend
 
-    dim_values = {}
-    for item in unknown:
-        if item.startswith("--") and "=" in item:
-            key, val = item[2:].split("=", 1)
-            dim_values[key] = int(val)
-        else:
-            print(f"Warning: ignoring unknown arg '{item}'", file=sys.stderr)
+    dim_values = _parse_dim_values(unknown)
 
     torch.cuda.set_device(args.gpu)
     arch = args.arch if args.arch else _detect_arch(args.gpu)
@@ -403,13 +496,14 @@ def main():
 
     if not under_nsight:
         print(f"[benchmark] solution  : {solution_file}")
+        print(f"[benchmark] backend   : {_backend}")
         print(f"[benchmark] reference : {ref_file}")
         print(f"[benchmark] arch      : {arch}")
         print(f"[benchmark] dims      : {dim_values}")
         print()
 
     state = _init_solution(solution_file, dim_values, args.ptr_size, arch, args.seed)
-    sol_fn = state["callable"]
+    sol_fn = state.callable
     _init_ref(ref_file, solution_file, dim_values, args.ptr_size, arch, args.seed)
 
     if not under_nsight:
@@ -418,10 +512,10 @@ def main():
         torch.cuda.synchronize()
         print("[correctness] checking...")
         ok = _check_correctness(
-            sol_tensors=state["tensors"],
-            ref_inputs_snapshot=state["ref_inputs"],
+            sol_tensors=state.tensors,
+            ref_inputs_snapshot=state.ref_inputs,
             ref_fn=_ref_fn,
-            output_names=state["output_names"],
+            output_names=state.output_names,
             atol=args.atol,
             rtol=args.rtol,
         )

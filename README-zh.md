@@ -1,6 +1,6 @@
 # kernel-opt-skill
 
-面向 CUDA 的 kernel 优化 Skill，通过系统化的性能分析、瓶颈定位和迭代优化，帮助开发者快速提升 CUDA kernel 性能。
+面向 CUDA/Triton 的 kernel 优化 Skill，通过系统化的性能分析、瓶颈定位和迭代优化，帮助开发者快速提升 kernel 性能。
 
 [English](README.md)
 
@@ -14,6 +14,7 @@
 | Python | 3.10+ |
 | PyTorch | 2.0+ |
 | nsight-python | 0.9.6+ |
+| Triton | 2.0+ |
 
 ## 项目结构
 
@@ -25,6 +26,7 @@ kernel-opt-skill/
 │   ├── profiling/                # NCU 性能分析与正确性验证
 │   ├── benchmark/                # solution 与 reference 框架横向对比
 │   ├── cuda/                     # 内存/计算/延迟优化策略参考
+│   ├── triton/                   # Triton 优化策略参考
 │   └── report/                   # 报告生成模板
 └── demo/                         # 优化实战案例（softmax、gemm……）
 ```
@@ -35,6 +37,85 @@ kernel-opt-skill/
 
 ```text
 /kernel-opt-skill 请帮我优化这个 kernel <kernel.cu>，迭代三次，输出到 <output_dir> 目录
+```
+
+### CUDA / Triton 最小模板示例
+
+#### CUDA（`.cu`）
+
+> 说明：profiling 脚本会加载同名动态库并调用 `extern "C" void solve(...)`。
+
+```cpp
+#include <cuda_runtime.h>
+
+__global__ void kernel(
+    const float* in0, const float* in1, float* out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        // TODO: replace with your kernel logic
+        out[i] = in0[i] + in1[i];
+    }
+}
+
+extern "C" void solve(
+    float* in0, float* in1, float* out, int n) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    kernel<<<blocks, threads>>>(in0, in1, out, n);
+    cudaDeviceSynchronize();
+}
+```
+
+#### Triton（`.py`）
+
+> 说明：profiling 脚本要求定义 `setup(**kwargs)` 与 `run_kernel(**kwargs)`。
+
+```python
+import torch
+import triton
+import triton.language as tl
+
+@triton.jit
+def _kernel(
+    x_ptr, y_ptr, out_ptr, n,
+    BLOCK: tl.constexpr,
+):
+    pid = tl.program_id(axis=0)
+    offs = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offs < n
+    x = tl.load(x_ptr + offs, mask=mask, other=0.0)
+    y = tl.load(y_ptr + offs, mask=mask, other=0.0)
+    tl.store(out_ptr + offs, x + y, mask=mask)
+
+def setup(n=1024, seed=42, **kwargs):
+    torch.manual_seed(seed)
+    x = torch.randn((n,), device="cuda", dtype=torch.float32)
+    y = torch.randn((n,), device="cuda", dtype=torch.float32)
+    out = torch.empty((n,), device="cuda", dtype=torch.float32)
+    return {
+        "inputs": {"x": x, "y": y, "out": out, "n": n},
+        "outputs": ["out"],
+    }
+
+def run_kernel(**kwargs):
+    x, y, out = kwargs["x"], kwargs["y"], kwargs["out"]
+    n = int(kwargs["n"])
+    grid = lambda meta: (triton.cdiv(n, meta["BLOCK"]),)
+    _kernel[grid](x, y, out, n, BLOCK=256)
+```
+
+#### Reference（`ref.py`）
+
+> 说明：correctness/benchmark 会调用 `reference(**kwargs)` 作为基准实现。
+
+```python
+import torch
+
+def reference(**kwargs):
+    x = kwargs["x"]
+    y = kwargs["y"]
+    out = kwargs["out"]
+    out.copy_(x + y)
 ```
 
 触发后，将按以下步骤自动执行优化循环：
@@ -57,7 +138,7 @@ flowchart TD
 ├── ref.py                  # 参考实现
 ├── env_check.md            # 环境信息
 ├── v0/
-│   ├── v0.cu               # 源码
+│   ├── v0.cu / v0.py       # 源码（CUDA / Triton）
 │   ├── correctness.md      # 正确性验证结果
 │   ├── ncu_summary.md      # NCU 指标摘要（LLM 友好格式）
 │   └── ncu_details.md      # NCU 完整指标表格

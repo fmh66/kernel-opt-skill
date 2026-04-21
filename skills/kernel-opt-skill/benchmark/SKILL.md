@@ -1,6 +1,6 @@
 ---
 name: benchmark
-description: Benchmark a custom CUDA kernel against a reference implementation (PyTorch/CUTLASS). Measures execution time via CUDA Events and collects hardware metrics via nsight-python.
+description: Benchmark a custom CUDA/Triton kernel against a reference implementation (PyTorch/CUTLASS). Measures execution time via CUDA Events and collects hardware metrics via nsight-python.
 ---
 
 # benchmark-skill
@@ -30,17 +30,20 @@ benchmark/
 
 ## 用法
 
-> **前置条件**：需先通过 nvcc 编译好 `.so` 文件，脚本只加载不编译。
+> **前置条件**
+> - CUDA：需先通过 nvcc 编译好 `.so` 文件，脚本只加载不编译
+> - Triton：无需编译 `.so`
 
 ```bash
 # 先编译
 nvcc -shared -std=c++17 -arch=sm_90 -O3 -Xcompiler -fPIC -o kernel.so kernel.cu
 
-# 再 benchmark
-python script/benchmark.py <solution.cu> \
+# benchmark（CUDA 或 Triton）
+python script/benchmark.py <solution.{cu,py}> \
     --ref=<ref.py> \
     --output-dir=<dir> \
     --M=<M> --N=<N> \
+    [--backend=<auto/cuda/triton>] \
     [--warmup=<n>] \
     [--iters=<n>] \
     [--ptr-size=<n>] \
@@ -57,13 +60,14 @@ python script/benchmark.py <solution.cu> \
 
 | 参数 | 必选 | 默认 | 说明 |
 |---|:---:|---|---|
-| `solution_file` | ✓ | — | `.cu` 文件，需暴露 `extern "C" void solve(...)` |
+| `solution_file` | ✓ | — | `.cu` 或 `.py`（Triton） |
 | `--ref` | ✓ | — | 参考实现 `.py`，定义 `reference(**kwargs)` |
 | `--output-dir` | ✓ | — | 输出目录 |
 | `--M/--N/...` | ✓ | — | kernel 签名中的整型维度参数 |
+| `--backend` | | `auto` | `auto/cuda/triton` |
 | `--warmup` | | 20 | 正式计时前的预热轮数 |
 | `--iters` | | 100 | CUDA Events 计时迭代次数 |
-| `--ptr-size` | | 0 | 覆盖指针 buffer 元素数 |
+| `--ptr-size` | | 0 | 覆盖 CUDA 指针 buffer 元素数（Triton 可忽略） |
 | `--arch` | | 自动探测 | 如 `sm_90` |
 | `--gpu` | | 0 | GPU 设备索引 |
 | `--atol/--rtol` | | 1e-4/1e-3 | 正确性容差 |

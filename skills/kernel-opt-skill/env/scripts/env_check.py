@@ -170,6 +170,18 @@ def probe_nsight_python() -> dict[str, Any]:
     return info
 
 
+def probe_triton_python() -> dict[str, Any]:
+    info: dict[str, Any] = {"importable": False, "version": "", "error": ""}
+    try:
+        import triton  # type: ignore
+    except Exception as exc:
+        info["error"] = str(exc)
+        return info
+    info["importable"] = True
+    info["version"] = getattr(triton, "__version__", "unknown")
+    return info
+
+
 def collect_env_check(gpu_index: int) -> dict[str, Any]:
     warnings: list[str] = []
     errors: list[str] = []
@@ -251,6 +263,11 @@ def collect_env_check(gpu_index: int) -> dict[str, Any]:
     add_req("nsight-python package", nsight_info["importable"],
             f"nsight {nsight_info['version']}" if nsight_info["importable"] else (nsight_info["error"] or "import nsight failed"))
 
+    triton_info = probe_triton_python()
+    result["triton_python"] = triton_info
+    add_req("triton package", triton_info["importable"],
+            f"triton {triton_info['version']}" if triton_info["importable"] else (triton_info["error"] or "import triton failed"))
+
     result["ready"] = not errors
     return result
 
@@ -282,6 +299,7 @@ def render_markdown(result: dict[str, Any]) -> str:
     nvcc = result.get("nvcc") or {}
     ncu = result.get("ncu") or {}
     nsight_py = result.get("nsight_python") or {}
+    triton_py = result.get("triton_python") or {}
 
     lines.extend([
         "",
@@ -301,6 +319,7 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"- ncu: {ncu.get('resolved') or 'not found'}",
         f"- ncu version: {ncu.get('version_output') or 'n/a'}",
         f"- nsight-python: {nsight_py.get('version') or 'not importable'}",
+        f"- triton: {triton_py.get('version') or 'not importable'}",
         "",
         "## Environment variables",
         f"- CUDA_PATH: {result.get('env_vars', {}).get('CUDA_PATH') or '(unset)'}",
