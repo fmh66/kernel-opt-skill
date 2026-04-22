@@ -147,12 +147,13 @@ flowchart TD
 └── benchmark.md            # Best version vs reference performance comparison
 ```
 
-## Demo
+## 实战案例
 
-Full optimization walkthroughs with source code, per-version NCU profiles, and benchmark results are in [demo/DEMO.md](demo/DEMO.md).
+完整的优化过程（源码、NCU 指标、每轮决策分析、Benchmark）见 [demo/DEMO.md](demo/DEMO.md)。
 
-| Case | Shape | Best Speedup | vs PyTorch |
+| 案例 | 规模 | 最终 Speedup | 最优版本 vs PyTorch |
 | --- | --- | --- | --- |
-| [Softmax](demo/DEMO.md#1-softmax) | N=10240, D=1024 | **6.32×** | 1.85× faster |
-| [GEMM](demo/DEMO.md#2-gemm) | M=K=N=4096 | **6.81×** | 1.52× slower than cuBLAS |
-| [MHA](demo/DEMO.md#3-mha) | N=1024, d=512, h=8 | **10.23×** | 2.86× slower than Flash Attention |
+| [Softmax (CUDA)](demo/DEMO.md#softmax) | N=10240, D=1024 | **6.32×** | 1.85× 快于 PyTorch |
+| [GEMM (CUDA)](demo/DEMO.md#gemm) | M=K=N=4096 | **6.81×** | 1.52× 慢于 cuBLAS |
+| [MHA (CUDA)](demo/DEMO.md#mha) | N=1024, d=512, h=8 | **10.23×** | 2.86× 慢于 Flash Attention |
+| [GEMM (Triton)](demo/DEMO.md#gemm-1) | M=N=K=10240 | **3.07×** | 2.28× 快于 torch.mm |

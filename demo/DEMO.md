@@ -1,10 +1,12 @@
-# CUDA Kernel Optimization Demo
+# CUDA / Triton Kernel Optimization Demo
 
-**Environment**: NVIDIA RTX A6000 (CC 8.6) · CUDA 12.6 · ncu 2024.3.2.0 · PyTorch 2.11.0+cu126
+**Environment**: NVIDIA RTX A6000 (CC 8.6) · CUDA 12.6 · Triton 3.6.0 · ncu 2024.3.2.0 · PyTorch 2.11.0+cu126
 
 ---
 
-## Softmax
+## CUDA
+
+### Softmax
 
 **Shape**: N=10240, D=1024
 
@@ -28,7 +30,7 @@ v3 is **1.85× faster** than PyTorch at near-identical DRAM bandwidth — the ga
 
 ---
 
-## GEMM
+### GEMM
 
 **Shape**: M=K=N=4096
 
@@ -53,7 +55,7 @@ v3 is **1.52× slower** than cuBLAS at near-identical hardware utilization — t
 
 ---
 
-## MHA
+### MHA
 
 **Shape**: N=1024, d_model=512, num_heads=8 (d_k=64)
 
@@ -77,3 +79,30 @@ v3 is **1.52× slower** than cuBLAS at near-identical hardware utilization — t
 | Occupancy (%) | 40.3 | 40.3 |
 
 v5 is **2.86× slower** than PyTorch at identical hardware utilization — PyTorch uses Tensor Cores (FP16/BF16) while v5 runs FP32.
+
+---
+
+## Triton
+
+### GEMM
+
+**Shape**: M=N=K=10240
+
+| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | TC Util (%) | FMA Util (%) | Occupancy (%) | Regs/Thread | L2 Hit (%) | Math Throttle | Bottleneck | Key Optimization |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| v0 | 129.74 | 1.00× | 73.95 | 82.80 | 0.00 | 63.61 | 25.31 | 96 | 47.7 | 0.04 | Memory | Naive (FMA, no TC, no pipelining) |
+| v1 | 44.26 | 2.93× | **82.53** | 75.39 | **82.45** | 1.44 | 16.50 | 168 | 66.95 | 7.19 | Compute | `tf32` MMA + grouped L2 swizzle + `tl.range(num_stages=3)` |
+| v2 | 43.92 | 2.95× | 80.61 | 76.99 | 79.07 | 1.37 | 8.10 | 241 | 65.68 | 3.01 | Compute | `@autotune` (broken: `range()` bug disabled pipelining) |
+| v3 | **42.25** | **3.07×** | 75.32 | 73.23 | 76.91 | 2.45 | 16.85 | **128** | **82.00** | 5.20 | Compute | Fixed `tl.range()` + correct autotune + boundary mask fix |
+
+**Benchmark**: v3 vs `torch.mm` (M=N=K=10240)
+
+| Metric | v3 | torch.mm |
+| --- | ---: | ---: |
+| Time (ms) | 42.77 | 97.36 |
+| SM Throughput (%) | 76.12 | 75.85 |
+| Mem Throughput (%) | 77.71 | 80.09 |
+| DRAM Bandwidth (GB/s) | 566 | 584 |
+| Occupancy (%) | 16.66 | 16.66 |
+
+v3 is **2.28× faster** than `torch.mm` (which includes `copy_()` overhead). cuBLAS achieves ~7 ms for this shape — a **~6× gap** remains, limited by register pressure (128 regs/thread → 1 block/SM) and Math Pipe Throttle stall (5.2).

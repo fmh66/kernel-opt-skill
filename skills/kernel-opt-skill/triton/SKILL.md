@@ -23,7 +23,7 @@ triton/
 4. 使用 swizzle / grouped ordering 提升 L2 命中率
 5. 做算子融合（如 matmul + epilogue、fused norm/softmax），减少显存往返
 
-> 详细条目 → `reference/triton-opt.md`（第二、五、八章）
+> 详细条目 → `reference/triton-opt.md`：内存访问优化 · 并行与 Grid 策略 · 工程化与诊断手段
 
 ---
 
@@ -36,7 +36,7 @@ triton/
 4. 指令级优化（`exp2`、`rsqrt`、FMA 友好表达式）并控制寄存器压力
 5. 结合 Roofline 判断是否仍需继续向计算侧优化
 
-> 详细条目 → `reference/triton-opt.md`（一、四、六、八章）
+> 详细条目 → `reference/triton-opt.md`：Block 与 Tile 尺寸调优 · 计算层面的优化 · 寄存器与占用率管理 · 工程化与诊断手段
 
 ---
 
@@ -49,7 +49,7 @@ triton/
 4. 控制寄存器与 occupancy 平衡，避免 spill 导致长记分牌 stall
 5. 通过 NCU 的 stall 指标与 warp 状态定位同步和调度瓶颈
 
-> 详细条目 → `reference/triton-opt.md`（三、五、六、八章）
+> 详细条目 → `reference/triton-opt.md`：流水线与异步化 · 并行与 Grid 策略 · 寄存器与占用率管理 · 工程化与诊断手段
 
 ---
 
