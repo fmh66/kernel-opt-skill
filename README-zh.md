@@ -153,6 +153,9 @@ flowchart TD
 
 | 案例 | 规模 | 最终 Speedup | 最优版本 vs PyTorch |
 | --- | --- | --- | --- |
-| [Softmax](demo/DEMO.md#1-softmax) | N=10240, D=1024 | **6.32×** | 1.85× 快于 PyTorch |
-| [GEMM](demo/DEMO.md#2-gemm) | M=K=N=4096 | **6.81×** | 1.52× 慢于 cuBLAS |
-| [MHA](demo/DEMO.md#3-mha) | N=1024, d=512, h=8 | **10.23×** | 2.86× 慢于 Flash Attention |
+| [Softmax (CUDA)](demo/DEMO.md#softmax) | N=10240, D=1024 | **6.32×** | 1.85× 快于 PyTorch |
+| [GEMM (CUDA)](demo/DEMO.md#gemm) | M=K=N=4096 | **6.81×** | 1.52× 慢于 cuBLAS |
+| [MHA (CUDA)](demo/DEMO.md#mha) | N=1024, d=512, h=8 | **10.23×** | 2.86× 慢于 Flash Attention |
+| [GEMM (Triton)](demo/DEMO.md#gemm-1) | M=N=K=10240 | **3.07×** | 2.28× 快于 torch.mm |
+| [MHA (Triton)](demo/DEMO.md#mha-1) | N=1024, d=1024, h=16 | **626×** | 4.12× 快于 PyTorch ref |
+| [Softmax (Triton)](demo/DEMO.md#softmax-1) | N=10240, D=1024 | 1.00× (v0 已最优) | 1.79× 快于 PyTorch |

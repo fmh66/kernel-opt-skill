@@ -106,3 +106,53 @@ v5 is **2.86× slower** than PyTorch at identical hardware utilization — PyTor
 | Occupancy (%) | 16.66 | 16.66 |
 
 v3 is **2.28× faster** than `torch.mm` (which includes `copy_()` overhead). cuBLAS achieves ~7 ms for this shape — a **~6× gap** remains, limited by register pressure (128 regs/thread → 1 block/SM) and Math Pipe Throttle stall (5.2).
+
+---
+
+### MHA
+
+**Shape**: N=1024, d_model=1024, num_heads=16 (d_k=64)
+
+| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | TC Util (%) | Occupancy (%) | Regs/Thread | Long SB | Bottleneck | Key Optimization |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| v0 | 135.40 | 1.00× | 39.96 | 13.99 | 0 | 49.90 | 80 | 15.74 | Latency | Bug-fixed baseline; grid (H,N,d_k) — 64× redundant attention row computation |
+| v1 | 3.68 | 36.8× | 35.86 | 87.91 | 0 | 65.66 | 63 | 25.48 | Memory | Grid (H,N): one program computes full output row, eliminates 64× redundancy |
+| v2 | 0.73 | 185× | 20.21 | 12.47 | 0 | 8.33 | 255 | 0.09 | Latency (low occ.) | Flash Attention tiling + `tl.dot` for QK^T and PV (BLOCK_M=32) |
+| v3 | **0.22** | **626×** | 32.12 | 30.06 | **41.35** | 8.35 | 144 | 0.38 | Balanced (TC) | `allow_tf32=True` + `@triton.autotune` (BLOCK_M=64/BLOCK_N=64/num_warps=8) |
+
+**Benchmark**: v3 vs PyTorch reference (N=1024, d_model=1024, num_heads=16)
+
+| Metric | v3 | PyTorch |
+| --- | ---: | ---: |
+| Time (ms) | **0.2183** | 0.8989 |
+| SM Throughput (%) | 32.23 | 32.18 |
+| Mem Throughput (%) | 29.95 | 29.77 |
+| DRAM Bandwidth (GB/s) | 218 | 217 |
+| Occupancy (%) | 8.33 | 8.33 |
+
+v3 is **4.12× faster** than PyTorch reference at identical hardware utilization — the speedup comes from eliminating 64× algorithmic redundancy (grid fix), Flash Attention tiling, and TF32 Tensor Core acceleration.
+
+---
+
+### Softmax
+
+**Shape**: N=10240, D=1024
+
+| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | Occupancy (%) | Regs/Thread | Long SB (%) | Barrier (%) | Bottleneck | Key Optimization |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| v0 | **0.1477** | **1.00×** | 11.2 | 92.9 | 97.0 | 23 | 46.8 | 13.7 | Memory | Already optimal: single-pass fused softmax at 92.9% memory SOL |
+| v1 | 0.1632 | 0.90× | 11.0 | 91.2 | 97.8 | 22 | 51.6 | 15.1 | Memory | `tl.exp2` attempt — EX2 and EXP share identical MUFU throughput; extra FMUL hurts |
+| v2 | 0.1610 | 0.92× | 11.0 | 92.7 | 97.0 | 36 | 31.1 | 24.9 | Memory | 2 rows/program: hides DRAM latency (Long SB ↓) but doubles Barrier stalls |
+| v3 | 0.1491 | 0.99× | 7.2 | 93.2 | 65.4 | 31 | 31.6 | 8.4 | Memory | `num_warps=2` (64 threads): fewer reduction stages, lower occupancy offsets gain |
+| v4 | 0.1496 | 0.99× | 22.4 | 93.0 | 97.4 | 28 | 18.8 | 4.5 | Memory | Online softmax via `tl.reduce`: collapses all stalls but 10240 divergent branch targets + 3× extra `exp()` cancel savings |
+
+**Benchmark**: v0 (best) vs PyTorch (N=10240, D=1024)
+
+| Metric | v0 | PyTorch |
+| --- | ---: | ---: |
+| Time (ms) | **0.1479** | 0.2648 |
+| Mem Throughput (%) | 92.6 | 93.2 |
+| DRAM Bandwidth (GB/s) | 675 | 679 |
+| Occupancy (%) | 94.9 | 94.9 |
+
+v0 is **1.79× faster** than PyTorch at near-identical DRAM bandwidth — PyTorch uses multiple kernel passes (doubling DRAM traffic) while v0 fuses max-reduction, exp, sum-reduction, and normalization into a single pass. No further improvement was achievable within 4 iterations.
