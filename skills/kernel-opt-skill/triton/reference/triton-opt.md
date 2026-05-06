@@ -1,329 +1,329 @@
-# Triton 算子核优化指南
+# Triton Kernel Optimization Guide
 
-本文档系统性梳理 Triton kernel 的优化方法论，涵盖从 tile 尺寸调优到工程化诊断的八大类措施。每一类都从原理、手段、要点三个角度展开，作为编写和调优 Triton 算子时的参考手册。
-
----
-
-## Block 与 Tile 尺寸调优
-
-### 原理
-
-Triton 的编程模型是"每个 program 处理一个 tile"。tile 的尺寸（如 `BLOCK_M`、`BLOCK_N`、`BLOCK_K`）是最核心的性能参数，它直接决定了四件事：
-
-- **并行度**：grid 大小等于问题规模除以 block 大小。block 越大则 grid 越小，SM 占用率可能下降；block 越小则 program 数目越多，launch 和调度开销增加。
-- **寄存器压力**：block 内的中间结果驻留在寄存器中，block 过大会导致寄存器 spill 到 local memory（实际位于显存），引发严重性能下降。
-- **访存效率**：tile 太小时，每次 load 搬运的数据量不足以饱和显存带宽；tile 太大时，L1/L2 cache 命中率又会下降。
-- **算术强度**：对矩阵乘法而言，tile 越大数据复用率越高，算术强度（FLOPs/Bytes）越高，越容易从 memory-bound 转为 compute-bound。
-
-### 调优手段
-
-- **使用 `triton.autotune`**：提供多组候选 `triton.Config`，由 Triton 在首次运行时自动 benchmark 选出最优解，并通过 `key` 参数按输入形状分桶缓存。
-- **分形状区间调优**：大矩阵偏好大 tile（如 128×256），小矩阵或 batched small GEMM 偏好小 tile（如 32×32），不能一套配置打天下。
-- **联动 `num_warps`**：常用值为 4 或 8，决定每个 program 拥有的线程数，从而影响每线程寄存器数量与并行粒度。
-- **联动 `num_stages`**：决定软件流水线深度，一般取 2～5，受限于 shared memory 容量。
-
-### 要点
-
-- Tile 尺寸一般取 2 的幂（16、32、64、128、256），以契合 warp（32 线程）和硬件向量化指令。
-- 观察 `ncu` 输出的寄存器使用量和 local memory 使用量，发现 spill 时应立即减小 tile 或增加 `num_warps`。
-- Autotune 的候选集不是越多越好，集合太大会让首次运行极慢，应基于经验筛选 5～10 组常用配置。
-- 不同硬件（A100、H100、消费级显卡）的最优配置差异显著，最好针对目标硬件单独调优。
+This document systematically covers Triton kernel optimization methodology across eight categories, from tile size tuning to engineering diagnostics. Each category is presented from the perspectives of principles, techniques, and key points, serving as a reference for writing and tuning Triton operators.
 
 ---
 
-## 内存访问优化
+## Block and Tile Size Tuning
 
-显存带宽通常是 kernel 的首要瓶颈，内存访问层面的优化往往带来最大的收益。
+### Principles
 
-### 合并访问
+Triton's programming model is "each program processes one tile." Tile size (e.g., `BLOCK_M`, `BLOCK_N`, `BLOCK_K`) is the most critical performance parameter, directly determining four things:
 
-GPU 显存控制器一次搬运一个连续的 128 字节 sector。若一个 warp 内 32 个线程访问的是连续地址，则能被合并成少量事务；若跨 stride 访问，则会产生冗余搬运和带宽浪费。
+- **Parallelism**: grid size equals problem size divided by block size. Larger blocks mean a smaller grid and potentially lower SM occupancy; smaller blocks mean more programs, increasing launch and scheduling overhead.
+- **Register pressure**: intermediate results within a block reside in registers. Excessively large blocks cause register spills to local memory (actually in DRAM), causing severe performance degradation.
+- **Memory access efficiency**: tiles too small fail to saturate memory bandwidth per load; tiles too large reduce L1/L2 cache hit rates.
+- **Arithmetic intensity**: for matrix multiplication, larger tiles mean higher data reuse and arithmetic intensity (FLOPs/Bytes), making it easier to transition from memory-bound to compute-bound.
 
-在 Triton 中保证合并访问的关键是：**让最内层维度在内存中连续**。加载二维 tile 时，应把 stride 为 1 的维度放在 `[None, :]` 位置，让同一 warp 内的线程沿着连续地址展开。
+### Tuning Techniques
 
-### 对齐与向量化提示
+- **Use `triton.autotune`**: provide multiple candidate `triton.Config` entries; Triton automatically benchmarks on first run to select the optimal one, caching by input shape via the `key` parameter.
+- **Tune by shape range**: large matrices prefer large tiles (e.g., 128×256); small matrices or batched small GEMM prefer small tiles (e.g., 32×32). One config cannot serve all shapes.
+- **Co-tune `num_warps`**: commonly 4 or 8, determining the number of threads per program and thus the per-thread register count and parallelism granularity.
+- **Co-tune `num_stages`**: controls software pipeline depth, typically 2–5, limited by shared memory capacity.
 
-Triton 编译器会根据指针属性生成 `ld.global.v4`、`ld.global.v2` 等宽指令。可以通过以下方式帮助编译器识别对齐：
+### Key Points
 
-- **`tl.multiple_of(x, n)`**：告知编译器 `x` 是 `n` 的整数倍。
-- **`tl.max_contiguous(x, n)`**：告知编译器 `x` 中连续元素的最大长度。
-- **函数参数标注**：通过 `tl.constexpr` 约束某些 stride 为 1，可触发更优的代码生成路径。
-
-这些提示在处理非规整形状时尤其重要，它们决定了编译器是否敢于使用 128-bit 宽 load。
-
-### 掩码裁剪处理边界
-
-对非整除的形状，统一使用 `mask=` 参数处理尾部，而不是写成 `if` 分支。好处是主循环路径保持规整，避免 warp divergence；同时通过 `other=` 为越界位置填充中性值（加法用 0，乘法用 1，max 用 -inf）。
-
-### 共享内存复用
-
-Triton 不需要手动管理 shared memory，但通过合理的 tile 形状和循环结构，编译器会自动把复用的数据放在 shared memory 中。例如矩阵乘法沿 K 维度循环时，A 和 B 的 tile 都会被缓存下来以便多次复用，从而提升算术强度。
-
-### 避免 Bank Conflict
-
-shared memory 被分成 32 个 bank，一个 warp 内多个线程同时访问同一 bank 不同地址会造成 serialization。避免 bank conflict 的手段：
-
-- 使用经过验证的 tile 形状（如 matmul 教程里的 128×128×32）。
-- 对转置类 kernel，避免 `BLOCK_M == BLOCK_N == 32` 的朴素写法，可通过 padding 到 33 或让编译器自动 swizzle 缓解。
-
-### 减少冗余加载
-
-- 把循环不变的 load（如 bias、scale 系数）提到循环外，避免每轮重复搬运。
-- 把可复用的中间结果缓存在寄存器数组中，而不是反复从显存读取。
-- 对需要多次访问的只读张量，考虑主动预取到 shared memory。
+- Tile sizes are generally powers of 2 (16, 32, 64, 128, 256) to align with warps (32 threads) and hardware vectorization instructions.
+- Monitor `ncu` output for register usage and local memory usage; reduce tiles or increase `num_warps` immediately upon detecting spills.
+- More autotune candidates is not always better — too large a set makes the first run extremely slow. Filter to 5–10 commonly used configs based on experience.
+- Optimal configs differ significantly across hardware (A100, H100, consumer GPUs); tune separately for the target hardware.
 
 ---
 
-## 流水线与异步化
+## Memory Access Optimization
 
-### 软件流水线（num_stages）
+DRAM bandwidth is typically the primary bottleneck of a kernel; memory-level optimizations often yield the largest gains.
 
-软件流水线的核心思想是：**在计算第 i 轮时，异步发起第 i+1 轮（甚至更远）的 load**，让访存延迟被计算掩盖。
+### Coalesced Access
 
-`num_stages=N` 意味着编译器会维护 N 份 shared memory buffer 轮流使用。选择原则：
+The GPU DRAM controller transfers one contiguous 128-byte sector at a time. If 32 threads in a warp access contiguous addresses, they can be coalesced into a small number of transactions; strided access creates redundant transfers and wasted bandwidth.
 
-- **Ampere（A100）**：通常 3～4 级最优。
-- **Hopper（H100）**：配合 TMA 可以做到 5～6 级。
-- **过深的副作用**：shared memory 不够用，反而导致 occupancy 下降或 spill。
+In Triton, the key to ensuring coalesced access is: **keep the innermost dimension contiguous in memory**. When loading a 2D tile, place the stride-1 dimension at the `[None, :]` position, so threads within the same warp expand along contiguous addresses.
 
-软件流水线只对循环体内有稳定 load-compute 模式的 kernel 生效，单次 kernel（如 elementwise）不需要设置。
+### Alignment and Vectorization Hints
 
-### 异步拷贝与 TMA
+The Triton compiler generates wide instructions like `ld.global.v4` and `ld.global.v2` based on pointer attributes. Use the following to help the compiler identify alignment:
 
-在较新的硬件上，Triton 会自动生成异步拷贝指令：
+- **`tl.multiple_of(x, n)`**: tells the compiler that `x` is a multiple of `n`.
+- **`tl.max_contiguous(x, n)`**: tells the compiler the maximum length of contiguous elements in `x`.
+- **Function argument annotation**: constraining certain strides to 1 via `tl.constexpr` can trigger better code generation paths.
 
-- **Ampere 的 `cp.async`**：实现 global → shared 的异步搬运，不阻塞计算单元。
-- **Hopper 的 TMA（Tensor Memory Accelerator）**：专门的硬件单元负责张量搬运，延迟更低、效率更高，还支持多维寻址。
+These hints are especially important for irregular shapes — they determine whether the compiler dares to use 128-bit wide loads.
 
-用户侧需要做的是：
+### Mask for Boundary Handling
 
-- 保证 tile 大小与对齐满足异步拷贝的要求（通常要求 4/8/16 字节对齐）。
-- 使用最新版 Triton，让其识别到硬件并走最优 lowering 路径。
+For non-divisible shapes, always use the `mask=` parameter to handle tails instead of writing `if` branches. This keeps the main loop path uniform, avoids warp divergence, and fills out-of-bounds positions with neutral values via `other=` (0 for addition, 1 for multiplication, -inf for max).
 
-### Load / Compute / Store 顺序
+### Shared Memory Reuse
 
-手写代码的顺序会影响编译器生成的依赖图。一般建议：
+Triton does not require manual shared memory management, but through proper tile shapes and loop structures, the compiler automatically places reused data in shared memory. For example, in matrix multiplication looping along the K dimension, both A and B tiles are cached for multiple reuses, improving arithmetic intensity.
 
-1. 先发起所有需要的 load。
-2. 对已到达的数据做计算。
-3. 最后一次性 store 结果。
+### Avoid Bank Conflicts
 
-这样可以让编译器构造尽可能深的流水线，把访存和计算最大程度重叠。
+Shared memory is divided into 32 banks; multiple threads in a warp accessing different addresses in the same bank simultaneously causes serialization. Ways to avoid bank conflicts:
 
----
+- Use validated tile shapes (e.g., 128×128×32 from the matmul tutorial).
+- For transpose-type kernels, avoid the naive `BLOCK_M == BLOCK_N == 32` pattern; mitigate via padding to 33 or let the compiler auto-swizzle.
 
-## 计算层面的优化
+### Reduce Redundant Loads
 
-### 使用 `tl.dot` 走 Tensor Core
-
-矩阵乘的核心操作务必使用 `tl.dot`，它会被 lowering 到 MMA / WMMA / WGMMA 指令，吞吐是标量 FMA 的十倍以上。
-
-要点：
-
-- 形状需要满足硬件 MMA 的最小粒度（通常 16×16×16）。
-- 累加器一般保持 fp32，以避免误差累积导致的精度损失。
-- 应严格沿用上层算子规定的数据类型，不得擅自降精度；是否能使用 fp16/bf16/fp8 是框架或模型设计层面的决策，kernel 作者不应越权。
-
-### 算子融合
-
-融合是 Triton 相对调库方案的最大优势之一。把多个逐元素或归约操作合并到一个 kernel 中，可以大幅减少显存往返次数。典型例子：
-
-- **Fused LayerNorm / RMSNorm**：一个 kernel 完成均值、方差、归一化、affine。
-- **Fused Softmax**：一个 kernel 完成 max、exp、sum、除法。
-- **Fused Attention（FlashAttention）**：将 QK^T、softmax、×V 全部融合，配合 online softmax 避免物化 N×N 的注意力矩阵。
-- **Matmul + Epilogue**：把 bias、激活、dropout、residual add 直接接在 `tl.dot` 之后完成。
-
-融合的代价是 kernel 复杂度上升、寄存器压力增加，需要在调度层面做权衡。
-
-### 指令级技巧
-
-- **`tl.exp2` 代替 `tl.exp`**：硬件对 `exp2` 有专用快速指令，softmax 中可预先将 `x/ln 2` 合并到上游计算。
-- **`rsqrt` 代替 `1 / sqrt`**：LayerNorm、RMSNorm 中常用，少一次除法。
-- **显式使用 FMA**：编译器通常会自动融合乘加，但在复杂表达式里显式写更稳。
-- **避免整数除法和取模**：改用位运算或预先计算好的 stride，尤其是在内层循环中。
-
-### 数值稳定性与性能结合
-
-- **Softmax 减最大值**：保持数值稳定，同时允许使用 `exp2` 等快路径。
-- **Welford 单趟统计**：LayerNorm 用 Welford 算法一趟计算均值方差，省一次扫描。
-- **Online Softmax**：FlashAttention 的关键思想，用递推式在一次扫描内完成 softmax，避免保存中间矩阵。
+- Move loop-invariant loads (e.g., bias, scale coefficients) outside the loop to avoid repeated transfers each iteration.
+- Cache reusable intermediate results in register arrays instead of repeatedly reading from DRAM.
+- For read-only tensors accessed multiple times, consider proactively prefetching into shared memory.
 
 ---
 
-## 并行与 Grid 策略
+## Pipelining and Async
 
-### Grid 划分
+### Software Pipelining (num_stages)
 
-Grid 决定了 program 总数以及它们与数据块的映射关系。常见选择：
+The core idea of software pipelining is: **while computing iteration i, asynchronously issue the load for iteration i+1 (or further ahead)**, so memory access latency is hidden by computation.
 
-- **1D grid**：适合 reduction、elementwise。
-- **2D grid**：适合 matmul，两个维度分别对应 M 和 N。
-- **1D + 内部解码**：把 `(pid_m, pid_n)` 编码成单个 `pid`，便于实现 swizzle。
+`num_stages=N` means the compiler maintains N shared memory buffers in rotation. Selection principles:
 
-原则是：grid 总数至少要让所有 SM 吃饱，一般 grid 数 ≥ SM 数 × 2～4 以提供调度余量。
+- **Ampere (A100)**: typically 3–4 stages is optimal.
+- **Hopper (H100)**: can reach 5–6 stages with TMA.
+- **Too many stages**: insufficient shared memory leads to lower occupancy or spills.
 
-### Swizzle 提升 L2 命中率
+Software pipelining only applies to kernels with a stable load-compute pattern in the loop body; single-pass kernels (e.g., elementwise) do not need it.
 
-在大矩阵 matmul 中，线性的 `(pid_m, pid_n)` 顺序会让多个 program 同时访问 B 的不同列，L2 cache 命中率下降。采用 group-major swizzle 的思路是让相邻的 program 集中在一个 L 形区域内，共享对 A 和 B 的访问，从而显著提升 L2 命中率。这是 Triton matmul 教程里的经典技巧，在大尺寸 GEMM 中常能带来 10%～30% 的加速。
+### Async Copy and TMA
+
+On newer hardware, Triton automatically generates async copy instructions:
+
+- **Ampere's `cp.async`**: implements async global → shared transfer without blocking compute units.
+- **Hopper's TMA (Tensor Memory Accelerator)**: a dedicated hardware unit for tensor transfers with lower latency, higher efficiency, and support for multi-dimensional addressing.
+
+What users need to do:
+
+- Ensure tile size and alignment meet async copy requirements (typically 4/8/16-byte alignment).
+- Use a recent version of Triton so it recognizes the hardware and follows the optimal lowering path.
+
+### Load / Compute / Store Ordering
+
+The order of handwritten code affects the dependency graph the compiler generates. General recommendation:
+
+1. Issue all needed loads first.
+2. Compute on data that has arrived.
+3. Store results in one batch at the end.
+
+This lets the compiler construct as deep a pipeline as possible, maximizing memory/compute overlap.
+
+---
+
+## Compute-level Optimization
+
+### Use `tl.dot` for Tensor Core
+
+The core matrix multiply operation must use `tl.dot`, which is lowered to MMA / WMMA / WGMMA instructions with throughput over 10x that of scalar FMA.
+
+Key points:
+
+- Shape must meet the minimum granularity of hardware MMA (typically 16×16×16).
+- Accumulator should stay fp32 to avoid precision loss from error accumulation.
+- Strictly follow the data type specified by the upstream caller; do not arbitrarily reduce precision. Whether fp16/bf16/fp8 can be used is a framework/model-level decision — kernel authors should not override it.
+
+### Operator Fusion
+
+Fusion is one of Triton's biggest advantages over calling libraries. Merging multiple elementwise or reduction operations into a single kernel dramatically reduces DRAM round-trips. Typical examples:
+
+- **Fused LayerNorm / RMSNorm**: one kernel computes mean, variance, normalization, and affine.
+- **Fused Softmax**: one kernel computes max, exp, sum, and division.
+- **Fused Attention (FlashAttention)**: fuses QK^T, softmax, and ×V together; uses online softmax to avoid materializing the N×N attention matrix.
+- **Matmul + Epilogue**: handles bias, activation, dropout, and residual add immediately after `tl.dot`.
+
+The cost of fusion is increased kernel complexity and register pressure, requiring tradeoffs at the scheduling level.
+
+### Instruction-level Tricks
+
+- **`tl.exp2` instead of `tl.exp`**: hardware has a dedicated fast instruction for `exp2`; precompute `x/ln 2` and fold it into upstream computation for softmax.
+- **`rsqrt` instead of `1 / sqrt`**: commonly used in LayerNorm and RMSNorm; eliminates one division.
+- **Explicit FMA usage**: the compiler usually fuses multiply-add automatically, but explicit use is more reliable in complex expressions.
+- **Avoid integer division and modulo**: use bitwise operations or precomputed strides instead, especially in inner loops.
+
+### Numerically Stable and Fast
+
+- **Softmax subtract max**: maintains numerical stability while allowing fast paths like `exp2`.
+- **Welford single-pass statistics**: use Welford's algorithm in LayerNorm to compute mean and variance in a single pass, saving one scan.
+- **Online Softmax**: the key idea in FlashAttention — use a recurrence to complete softmax in a single scan, avoiding storing intermediate matrices.
+
+---
+
+## Parallelism and Grid Strategy
+
+### Grid Partitioning
+
+The grid determines the total number of programs and their mapping to data blocks. Common choices:
+
+- **1D grid**: suitable for reduction and elementwise.
+- **2D grid**: suitable for matmul, with the two dimensions corresponding to M and N.
+- **1D + internal decode**: encode `(pid_m, pid_n)` as a single `pid` to facilitate swizzle.
+
+The rule is: grid count must be large enough for all SMs to stay busy — generally grid count ≥ SM count × 2–4 to provide scheduling slack.
+
+### Swizzle for L2 Hit Rate
+
+In large matrix matmul, linear `(pid_m, pid_n)` ordering causes multiple programs to simultaneously access different columns of B, reducing L2 cache hit rate. Group-major swizzle concentrates adjacent programs in an L-shaped region, sharing access to A and B, significantly improving L2 hit rate. This is a classic technique from the Triton matmul tutorial, commonly yielding 10–30% speedup for large GEMM.
 
 ### Persistent Kernel
 
-当 grid 数远大于 SM 数时，每个 program 的 launch 和上下文切换都是开销。Persistent kernel 的做法是让 program 数等于 SM 数（或其整数倍），在 kernel 内部循环处理多个 tile。优势：
+When the grid count far exceeds the SM count, each program's launch and context switch adds overhead. A persistent kernel sets the program count equal to the SM count (or a small multiple) and loops internally over multiple tiles. Advantages:
 
-- 减少 launch 开销和调度抖动。
-- 跨 tile 复用寄存器中的常量和预加载数据。
-- 在 H100 上配合 warp specialization 可进一步拉开差距。
+- Reduces launch overhead and scheduling jitter.
+- Reuses constants and preloaded data in registers across tiles.
+- On H100, combined with warp specialization, can widen the performance gap further.
 
 ### Split-K
 
-当 K 很大而 M、N 较小时，正常 grid 只有几十个 program，无法占满 SM。Split-K 的做法是把 K 维再切分为 S 份，由 S 个 program 并行计算部分和，最后通过原子加或二级 reduction kernel 合并结果。
+When K is large but M and N are small, the normal grid has only a few dozen programs, unable to fill all SMs. Split-K divides the K dimension into S parts, with S programs computing partial sums in parallel and merging via atomic adds or a secondary reduction kernel.
 
-代价是多次原子加或额外 kernel 开销，但对"小 M/N 大 K"的形状（如某些 attention 投影、embedding 反传）通常非常值得。
+The cost is multiple atomic adds or extra kernel overhead, but for "small M/N large K" shapes (e.g., certain attention projections, embedding back-propagation), it is usually well worth it.
 
-### 负载均衡
+### Load Balancing
 
-- 对变长输入（如 NLP 的 batch），用 `cu_seqlens` 记录每个样本的偏移，每个 program 处理一个 token block，避免 padding 带来的无效计算。
-- 对稀疏或不规则的问题，使用分桶或 bin-packing 策略，让每个 program 的工作量尽量接近，避免"长尾 program"拖慢整个 kernel。
-
----
-
-## 寄存器与占用率管理
-
-### 寄存器压力
-
-每个 SM 的寄存器总数固定（例如 A100 有 64K 个 32-bit 寄存器）。单线程使用的寄存器越多，能同时驻留的 warp 就越少，occupancy 随之下降。
-
-**诊断手段**：
-
-- 使用 `ncu --set full` 查看 `registers per thread` 和 `achieved occupancy`。
-- 观察 local memory 使用量，非 0 通常意味着 spill。
-- 设置 `TRITON_DEBUG=1` 或查看 PTX 输出确认寄存器分配。
-
-**缓解手段**：
-
-- 减小 `BLOCK_M / BLOCK_N` 等 tile 维度。
-- 减小 `num_stages`（流水线 buffer 也会占用寄存器）。
-- 增大 `num_warps`，把工作分摊到更多线程。
-- 拆分 kernel，把不相关的计算分开。
-- 避免持有过多不必要的中间张量。
-
-### Occupancy 与延迟隐藏
-
-Occupancy 不是越高越好。对计算密集型算子（如 matmul），低 occupancy + 大 tile 反而更快，因为流水线和 Tensor Core 已经把延迟吃完；对访存密集型算子，则需要高 occupancy 来切换 warp 隐藏访存延迟。
-
-经验法则：
-
-- **Matmul / Attention**：目标 occupancy 25%～50%，tile 尽量大。
-- **Elementwise / Reduction**：目标 occupancy 50%～100%，追求访存并行度。
-
-### 循环不变量外提与强度削减
-
-把循环不变的计算（如归一化系数、常量 reciprocal）提到循环外，减少内层循环的指令数。编译器通常会自动优化，但复杂表达式中显式提取更保险。
+- For variable-length inputs (e.g., NLP batches), use `cu_seqlens` to record per-sample offsets, with each program handling a token block, avoiding unnecessary computation from padding.
+- For sparse or irregular problems, use bucketing or bin-packing strategies so each program has approximately equal workload, avoiding "long-tail programs" dragging down the entire kernel.
 
 ---
 
-## 特殊数据路径
+## Register and Occupancy Management
 
-本章讨论的是在**不改变原始数据类型**的前提下，利用硬件特殊通路获得加速的手段。能否降精度（fp32 → fp16/bf16/fp8）属于模型和框架层面的决策，kernel 作者应当严格沿用上层传入的 dtype，不得擅自改动。
+### Register Pressure
 
-### 结构化稀疏与块稀疏
+The total number of registers per SM is fixed (e.g., A100 has 64K 32-bit registers). More registers per thread means fewer resident warps, lowering occupancy.
 
-- **2:4 稀疏**：Ampere 起支持，每 4 个权重中 2 个为 0，可获得约 2x 吞吐，需要 `cusparseLt` 或自定义 Triton kernel 配合。
-- **Block-sparse**：按 block 稀疏存储（如 blocksparse attention），通过 index 数组跳过空 block。Triton 写块稀疏 kernel 相对容易，只需在外层循环中按 index 跳转。
+**Diagnosis:**
 
-### Masked 与变长路径
+- Use `ncu --set full` to check `registers per thread` and `achieved occupancy`.
+- Monitor local memory usage; non-zero usually indicates spills.
+- Set `TRITON_DEBUG=1` or examine PTX output to confirm register allocation.
 
-对需要 mask 的场景（attention、padding），避免使用 `if` 分支造成 warp divergence，改用 `tl.where` 和带 mask 的 load/store。对因果 mask 可以直接跳过整个被完全 mask 掉的 block，减少无效计算。对变长 batch，使用 `cu_seqlens` 索引每个样本的起止位置，避免对 padding token 做无意义的计算。
+**Mitigation:**
+
+- Reduce tile dimensions like `BLOCK_M / BLOCK_N`.
+- Reduce `num_stages` (pipeline buffers also consume registers).
+- Increase `num_warps` to distribute work across more threads.
+- Split the kernel to separate unrelated computations.
+- Avoid holding unnecessary intermediate tensors.
+
+### Occupancy vs. Latency Hiding
+
+Occupancy is not always better when higher. For compute-intensive operators (like matmul), lower occupancy + larger tiles is often faster since the pipeline and Tensor Core already absorb the latency; for memory-intensive operators, higher occupancy is needed to switch warps and hide memory latency.
+
+Rules of thumb:
+
+- **Matmul / Attention**: target occupancy 25–50%, maximize tile size.
+- **Elementwise / Reduction**: target occupancy 50–100%, maximize memory parallelism.
+
+### Loop Invariant Hoisting and Strength Reduction
+
+Move loop-invariant computations (e.g., normalization coefficients, constant reciprocals) outside the loop to reduce instruction count in the inner loop. Compilers usually optimize this automatically, but explicit extraction is safer for complex expressions.
 
 ---
 
-## 工程化与诊断手段
+## Special Data Paths
 
-优化一半靠写，一半靠量。没有 profiler 就是盲调。
+This section discusses acceleration techniques using hardware special paths **without changing the original data type**. Whether to reduce precision (fp32 → fp16/bf16/fp8) is a model and framework-level decision; kernel authors must strictly use the dtype passed by the upstream caller and must not change it.
 
-### Autotune 诊断
+### Structured Sparsity and Block Sparsity
 
-通过环境变量 `TRITON_PRINT_AUTOTUNING=1` 可以打印每个 config 的耗时和被选中的最优 config。据此可以：
+- **2:4 sparsity**: supported from Ampere onwards; 2 of every 4 weights are zero, achieving approximately 2x throughput via `cusparseLt` or custom Triton kernels.
+- **Block-sparse**: sparse storage by blocks (e.g., blocksparse attention), skipping empty blocks via an index array. Writing block-sparse kernels in Triton is relatively straightforward — just navigate by index in the outer loop.
 
-- 缩小搜索空间，剔除明显劣势的配置。
-- 固化常用形状的最优配置，避免首跑抖动。
-- 发现"某些形状没有好配置"的信号，提示需要重新设计 kernel 结构。
+### Masked and Variable-length Paths
 
-### 查看中间代码
+For scenarios requiring masks (attention, padding), avoid `if` branches that cause warp divergence; use `tl.where` and masked load/store instead. For causal masks, directly skip blocks that are completely masked to reduce unnecessary computation. For variable-length batches, use `cu_seqlens` to index the start and end positions of each sample, avoiding meaningless computation on padding tokens.
 
-设置 `TRITON_CACHE_DIR` 指向某个目录，Triton 会把编译过程中的中间产物保留下来，包括：
+---
 
-- **TTIR（Triton IR）**：高层 IR，看整体结构。
-- **TTGIR（Triton GPU IR）**：能看到 layout、pipeline、num_stages 是否生效。
-- **LLIR（LLVM IR）**：用于深度调试。
-- **PTX**：检查是否生成了 `ld.global.v4`、`mma.sync`、`cp.async` 等关键指令。
-- **cubin / 元信息**：查看寄存器数量、shared memory 使用量。
+## Engineering and Diagnostics
 
-其中 TTGIR 和 PTX 是性能调优时最重要的两个产物。
+Half of optimization is writing; the other half is measuring. Tuning blind without a profiler is guesswork.
+
+### Autotune Diagnostics
+
+Set the environment variable `TRITON_PRINT_AUTOTUNING=1` to print the timing for each config and the selected optimal config. This allows you to:
+
+- Narrow the search space by eliminating clearly inferior configurations.
+- Lock in optimal configs for common shapes to avoid first-run jitter.
+- Detect "no good config for certain shapes" signals, indicating the kernel structure needs redesigning.
+
+### Inspecting Intermediate Code
+
+Set `TRITON_CACHE_DIR` to a directory; Triton will preserve intermediate compilation artifacts including:
+
+- **TTIR (Triton IR)**: high-level IR for understanding overall structure.
+- **TTGIR (Triton GPU IR)**: lets you see if layout, pipeline, and num_stages took effect.
+- **LLIR (LLVM IR)**: for deep debugging.
+- **PTX**: check for key instructions like `ld.global.v4`, `mma.sync`, `cp.async`.
+- **cubin / metadata**: view register count and shared memory usage.
+
+TTGIR and PTX are the two most important artifacts for performance tuning.
 
 ### Nsight Compute
 
-使用 `ncu` 进行细粒度 profiling 时，重点关注以下指标：
+When using `ncu` for fine-grained profiling, focus on the following metrics:
 
-- **SM 利用率**（`sm__throughput.avg.pct_of_peak_sustained_elapsed`）：反映计算单元是否饱和。
-- **显存带宽利用率**（`dram__throughput...`）：反映是否 memory-bound。
-- **全局 load 事务数**：判断是否存在访存冗余或 uncoalesced。
-- **Tensor Core 指令数**：确认是否真正走到了 MMA 路径。
-- **每线程寄存器数与每 block shared memory 量**：判断 occupancy 瓶颈。
+- **SM utilization** (`sm__throughput.avg.pct_of_peak_sustained_elapsed`): whether compute units are saturated.
+- **DRAM bandwidth utilization** (`dram__throughput...`): whether the kernel is memory-bound.
+- **Global load transaction count**: whether there is access redundancy or uncoalesced access.
+- **Tensor Core instruction count**: whether the MMA path is actually being used.
+- **Registers per thread and shared memory per block**: to identify occupancy bottlenecks.
 
-### Roofline 分析
+### Roofline Analysis
 
-Roofline 模型是判断优化方向的基本工具。计算硬件理论算术强度：
+The Roofline model is a fundamental tool for determining optimization direction. Compute the hardware's theoretical arithmetic intensity:
 
-- 若 kernel 的算术强度低于硬件拐点：**memory-bound**，优化方向是访存合并、tile 放大、融合、减少冗余搬运。
-- 若 kernel 的算术强度高于硬件拐点：**compute-bound**，优化方向是使用 Tensor Core、低精度、指令选择。
+- If the kernel's arithmetic intensity is below the hardware ridge point: **memory-bound** — optimize memory coalescing, tile enlargement, fusion, and reduction of redundant transfers.
+- If the kernel's arithmetic intensity is above the hardware ridge point: **compute-bound** — optimize with Tensor Core, lower precision, and instruction selection.
 
-盲目优化前先做一次 roofline，可以避免走弯路。
+Do a Roofline analysis before blindly optimizing to avoid going in the wrong direction.
 
-### 基准对照
+### Reference Benchmarks
 
-- 与 cuBLAS / cuDNN / CUTLASS / FlashAttention 等官方实现对齐相同形状，看差距。
-- 与 `torch.compile` 生成的 Triton kernel 对比，后者常常是一个已经 autotune 过的 baseline。
-- 测试覆盖多种形状（大方阵、瘦长矩阵、batched small GEMM、极端 K 长度），避免只对单一 case 调优。
+- Compare against official implementations like cuBLAS/cuDNN/CUTLASS/FlashAttention at the same shapes to see the gap.
+- Compare against the Triton kernel generated by `torch.compile` — it is often an already-autotuned baseline.
+- Test coverage across multiple shapes (large square matrices, tall/skinny matrices, batched small GEMM, extreme K lengths) to avoid tuning for only a single case.
 
-### 正确性与稳定性验证
+### Correctness and Stability Validation
 
-- 用 fp64 参考值做 allclose 检查，`atol/rtol` 根据精度类型合理设置。
-- 边界 case 必测：M/N/K 不是 block 整数倍、K = 0、全 mask、极大极小值、NaN 传播。
-- 多架构交叉验证（T4、A100、H100、消费级卡），避免只在单一硬件上能跑。
+- Use fp64 reference values for allclose checks; set `atol/rtol` appropriately for the precision type.
+- Always test boundary cases: M/N/K not divisible by block size, K=0, full mask, extreme values, NaN propagation.
+- Cross-architecture validation (T4, A100, H100, consumer GPUs) to avoid running correctly on only one hardware platform.
 
-### 性能回归与版本管理
+### Performance Regression and Version Management
 
-- Autotune 结果应缓存固化，发版时一并打包，避免用户首跑慢。
-- 把关键 kernel 的 benchmark 纳入 CI，Triton 升级时第一时间发现性能回归。
-- 记录真实业务的形状分布，做 profile-guided 优化，而不是凭直觉选配置。
-
----
-
-## 附：优化顺序建议
-
-这八类措施彼此耦合，实际调优时推荐的顺序是：
-
-1. **先正确，再优化**：写出功能正确的 naive 版本作为 baseline 和对照。
-2. **调 tile 和 num_warps / num_stages**：用 autotune 快速拿到可用性能。
-3. **打磨访存**：合并访问、向量化、掩码处理、swizzle。
-4. **走 Tensor Core 路径**：若是计算密集型算子，核心运算使用 `tl.dot`，让计算映射到 MMA 指令；数据类型严格沿用上层给定的 dtype，不擅自降精度。
-5. **做融合**：把 epilogue、前后处理一并塞进 kernel，减少显存往返。
-6. **改 grid 策略**：swizzle、persistent、split-K，按形状和硬件选择。
-7. **查 profiler**：用 `ncu` 定位最后 10%～20% 的瓶颈。
-8. **固化与回归**：缓存 autotune 配置，建立 benchmark 和 CI 监控。
-
-不同算子的侧重点也不同：
-
-- **Matmul**：重 tile 与 Tensor Core，重 swizzle 与 split-K。
-- **Attention**：重融合与 online softmax，重 IO 复杂度。
-- **Elementwise / 归一化**：几乎完全是访存优化，重融合与向量化。
-- **变长 / 稀疏**：重 grid 策略与负载均衡。
-
-把以上维度都纳入考量并循序渐进地打磨，Triton kernel 通常可以做到接近甚至持平手写 CUDA 的水平。
+- Autotune results should be cached and frozen, packaged with releases to avoid slow first-run for users.
+- Include key kernel benchmarks in CI; catch performance regressions immediately when Triton is upgraded.
+- Record real-workload shape distributions and do profile-guided optimization rather than relying on intuition.
 
 ---
 
-## 官方文档
+## Recommended Optimization Order
+
+These eight categories are intertwined; the recommended order for practical tuning is:
+
+1. **Correctness first, then optimize**: write a functionally correct naive version as baseline and reference.
+2. **Tune tile size and `num_warps` / `num_stages`**: use autotune to quickly reach usable performance.
+3. **Refine memory access**: coalescing, vectorization, masking, swizzle.
+4. **Use Tensor Core path**: for compute-intensive operators, use `tl.dot` for the core computation to map to MMA instructions; strictly follow the dtype given by the upstream caller.
+5. **Operator fusion**: fold epilogue, pre/post-processing into the kernel to reduce DRAM round-trips.
+6. **Grid strategy**: swizzle, persistent, split-K — choose based on shape and hardware.
+7. **Profile with `ncu`**: locate the last 10–20% bottleneck.
+8. **Freeze configs and regression testing**: cache autotune configs and establish benchmarks and CI monitoring.
+
+Different operators have different emphases:
+
+- **Matmul**: tiles and Tensor Core, swizzle and split-K.
+- **Attention**: fusion and online softmax, IO complexity.
+- **Elementwise / Normalization**: almost entirely memory optimization, fusion and vectorization.
+- **Variable-length / Sparse**: grid strategy and load balancing.
+
+By addressing all these dimensions and refining incrementally, Triton kernels can typically reach or match hand-written CUDA performance.
+
+---
+
+## Official Documentation
 
 https://triton-lang.org/main/index.html

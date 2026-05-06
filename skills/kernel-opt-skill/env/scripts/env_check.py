@@ -274,7 +274,7 @@ def collect_env_check(gpu_index: int) -> dict[str, Any]:
 
 def render_markdown(result: dict[str, Any]) -> str:
     lines = [
-        "#Environment Check",
+        "# Environment Check",
         "",
         "## Status",
         f"- ready: {'yes' if result.get('ready') else 'no'}",

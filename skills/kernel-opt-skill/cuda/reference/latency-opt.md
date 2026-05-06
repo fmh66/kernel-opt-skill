@@ -1,103 +1,103 @@
-# CUDA Kernel 延迟优化（Latency-Bound）
+# CUDA Kernel Latency Optimization (Latency-Bound)
 
 ---
 
-## Occupancy 与 Launch 配置
+## Occupancy & Launch Configuration
 
-### Launch Configuration 调优
+### Launch Configuration Tuning
 
-block size 的选择直接影响 occupancy 和硬件利用率。通常选择 128/256/512，但最优值取决于 kernel 的资源消耗。CUDA Occupancy Calculator 和 `cudaOccupancyMaxPotentialBlockSize` API 可以辅助决策。
+Block size directly affects occupancy and hardware utilization. Common choices are 128/256/512, but the optimal value depends on the kernel's resource consumption. The CUDA Occupancy Calculator and `cudaOccupancyMaxPotentialBlockSize` API can assist in making the decision.
 
-### 控制寄存器使用量
+### Control Register Usage
 
-每个线程用的寄存器越多，同时驻留的 warp 就越少（occupancy 下降），调度器隐藏延迟的能力就越弱。用 `__launch_bounds__(maxThreadsPerBlock, minBlocksPerMultiprocessor)` 提示编译器控制寄存器分配。
+The more registers each thread uses, the fewer warps can reside simultaneously (lower occupancy), and the weaker the scheduler's ability to hide latency. Use `__launch_bounds__(maxThreadsPerBlock, minBlocksPerMultiprocessor)` to hint the compiler to control register allocation.
 
-### 寄存器溢出（Register Spill）的处理
+### Register Spilling
 
-当寄存器不够时，编译器会把变量溢出到 local memory（实际是全局内存，经 L1/L2 缓存）。溢出严重时性能断崖式下降。通过减少活跃变量数量、缩小循环展开因子、或拆分 kernel 来缓解。用 `--ptxas-options=-v` 编译选项查看寄存器和溢出情况。
+When registers are insufficient, the compiler spills variables to local memory (actually global memory, cached in L1/L2). Heavy spilling causes severe performance cliffs. Mitigate by reducing active variable count, shrinking loop unroll factor, or splitting the kernel. Use `--ptxas-options=-v` to inspect register and spill statistics.
 
-### Occupancy 不是越高越好
+### Occupancy Is Not Always Better When Higher
 
-高 occupancy 意味着更多 warp 可以隐藏延迟，但也意味着每个线程可用的寄存器和 shared memory 更少。对于计算密集型 kernel，适度降低 occupancy 换取更多寄存器（从而减少 spill 和提升 ILP）往往性能更好。需要通过实测找到最优平衡点。
-
----
-
-## ILP（指令级并行）提升
-
-### 增加每线程独立工作量
-
-让每个线程处理多个数据元素（thread coarsening），在寄存器层面完成更多计算后再写回。这样调度器在单个 warp 等待时有更多独立指令可以发射，提升 ILP。
-
-### 循环展开
-
-用 `#pragma unroll` 或 `#pragma unroll N` 展开循环。展开后减少循环控制指令（比较、跳转），同时暴露更多独立指令给调度器，提升 ILP。
-
-### 软件流水
-
-循环体内把当前迭代的计算与下一迭代的数据预取重叠起来，最大化功能单元利用率。
+Higher occupancy means more warps available to hide latency, but also means fewer registers and shared memory available per thread. For compute-intensive kernels, a moderate reduction in occupancy in exchange for more registers (fewer spills, higher ILP) often yields better performance. Find the optimal balance through empirical testing.
 
 ---
 
-## 同步优化
+## ILP (Instruction-Level Parallelism) Improvement
 
-### 减少 `__syncthreads()` 次数
+### Increase Per-Thread Independent Work
 
-最直接的方式。如果 warp 内的数据访问模式天然不存在跨 warp 依赖，同步就是多余的。审查每一个 `__syncthreads()` 调用，确认其必要性。
+Have each thread process multiple data elements (thread coarsening), completing more computation in registers before writing back. This gives the scheduler more independent instructions to issue while a single warp is waiting, improving ILP.
 
-### Warp 级同步替代 Block 级同步
+### Loop Unrolling
 
-一个 warp 内的 32 个线程天然是 lockstep 执行的（Volta 之后有 independent thread scheduling，但 warp 级原语仍然有效）。用 `__syncwarp()` 替代 `__syncthreads()` 可以把同步粒度从整个 block 缩小到单个 warp，开销大幅降低。
+Use `#pragma unroll` or `#pragma unroll N` to unroll loops. Unrolling reduces loop control instructions (comparisons, jumps) while exposing more independent instructions to the scheduler, improving ILP.
 
-- **补充（语义边界）**：在 Volta+ 独立线程调度下，不应把"天然 lockstep"当作隐式同步保证；warp 内协作仍应使用正确 mask 与显式同步点确保可见性与收敛。
+### Software Pipelining
+
+Overlap the computation of the current iteration with the data prefetch for the next iteration within a loop body, maximizing functional unit utilization.
+
+---
+
+## Synchronization Optimization
+
+### Reduce `__syncthreads()` Count
+
+The most direct approach. If the data access pattern within a warp naturally has no cross-warp dependency, the sync is redundant. Audit every `__syncthreads()` call to confirm its necessity.
+
+### Warp-level Sync Instead of Block-level Sync
+
+The 32 threads within a warp naturally execute in lockstep (after Volta with independent thread scheduling, warp-level primitives are still valid). Using `__syncwarp()` instead of `__syncthreads()` reduces the sync granularity from the entire block to a single warp, dramatically lowering overhead.
+
+- **Note (semantic boundary)**: Under Volta+ independent thread scheduling, "natural lockstep" should not be assumed as an implicit sync guarantee; intra-warp cooperation should still use the correct mask and explicit sync points to ensure visibility and convergence.
 
 ### Warp Shuffle
 
-warp 内线程之间交换数据完全不需要经过共享内存，没有 bank conflict 问题，延迟极低。适用于归约、前缀和、广播等模式。这直接消除了"写 shared → sync → 读 shared"的三步开销。
+Data exchange between threads within a warp requires no shared memory, has no bank conflict issues, and has extremely low latency. Suitable for reduction, prefix sum, and broadcast patterns. This directly eliminates the "write shared → sync → read shared" three-step overhead.
 
 ### Cooperative Groups
 
-CUDA 9 引入的协作组机制，可以定义任意粒度的线程组并在该组内同步，比如只同步一个 tile（比如 8 个线程），避免不必要的全 block 等待。
+The cooperative group mechanism introduced in CUDA 9 allows defining thread groups of arbitrary granularity and syncing within that group — for example, syncing only a tile of 8 threads — avoiding unnecessary full-block waits.
 
-### `cuda::barrier` / `cuda::pipeline`（Ampere+）
+### `cuda::barrier` / `cuda::pipeline` (Ampere+)
 
-在异步拷贝和多级流水线中，用显式阶段同步替代"经验式同步"。核心思想是把 producer-consumer 的提交/等待点写清楚，避免偶现错误和性能抖动。
+In async copy and multi-stage pipelines, use explicit stage synchronization instead of "empirical synchronization". The core idea is to clearly specify producer-consumer commit/wait points, avoiding intermittent errors and performance jitter.
 
 ---
 
-## 异步预取
+## Async Prefetch
 
-### `cp.async` 预取
+### `cp.async` Prefetch
 
-（CUDA 11+）Global → Shared Memory 的搬运由硬件 DMA 完成，不占用寄存器和计算单元，可与计算完全重叠。配合多级 buffer 实现软件流水线，极大隐藏全局内存延迟。
+(CUDA 11+) Global → Shared Memory transfer is handled by hardware DMA, consuming no registers or compute units, and can overlap completely with computation. Combined with multi-stage buffers, this enables software pipelining that greatly hides global memory latency.
 
 ### `cudaMemPrefetchAsync`
 
-Unified Memory 场景下提前触发页迁移，避免按需缺页的高延迟。
+In Unified Memory scenarios, proactively trigger page migration to avoid the high latency of on-demand page faults.
 
 ---
 
-## 减少调度开销
+## Reduce Scheduling Overhead
 
 ### CUDA Graphs
 
-当 kernel 链路结构稳定且反复执行时，Graph 可以降低 CPU 提交与 launch 开销，特别是小 kernel 密集场景。动态图场景要评估 capture/update 成本。
+When the kernel chain structure is stable and executed repeatedly, Graphs can reduce CPU submission and launch overhead, especially in dense small-kernel scenarios. Evaluate capture/update costs for dynamic graph scenarios.
 
 ---
 
-## 验证清单（NCU）
+## NCU Validation Checklist
 
-Latency-Bound 优化建议至少配套以下验证：
+Latency-Bound optimizations should include at least the following validations:
 
-- **同步等待是否下降**：关注 `Stall Barrier` 与相关等待 stall 是否降低。
-- **调度可发射性是否改善**：关注 `Eligible Warps Per Cycle` 是否提升。
-- **Occupancy 变化**：关注 `Achieved Occupancy`，结合 kernel latency 判断是否改善。
-- **寄存器溢出**：用 `--ptxas-options=-v` + NCU 检查 spill 是否下降。
-- **整体收益**：最终以 kernel latency（avg/median）判断，不只看单个子指标。
+- **Sync wait reduction**: watch whether `Stall Barrier` and related wait stalls decrease.
+- **Scheduling issuability**: watch whether `Eligible Warps Per Cycle` improves.
+- **Occupancy change**: watch `Achieved Occupancy` combined with kernel latency to judge improvement.
+- **Register spilling**: use `--ptxas-options=-v` + NCU to check if spills decrease.
+- **Overall benefit**: final judgment by kernel latency (avg/median), not just individual sub-metrics.
 
-常见误判：
+Common misdiagnoses:
 
-- 只减少了 `__syncthreads()` 次数，但引入了数据可见性错误。
-- 只看 occupancy 升高，不看 kernel latency，可能出现"occupancy 上去但性能变差"。
-- 只看单个 stall 指标下降，没有检查整体 kernel latency 与 correctness。
+- Reducing `__syncthreads()` count while introducing data visibility errors.
+- Only seeing occupancy rise without watching kernel latency — occupancy can go up while performance gets worse.
+- Only seeing a single stall metric decrease without checking overall kernel latency and correctness.
 
-优化策略入口：`cuda/SKILL.md` — 按瓶颈类型给出实施优先级。
+Optimization entry point: `cuda/CUDA.md` — optimization priorities organized by bottleneck type.

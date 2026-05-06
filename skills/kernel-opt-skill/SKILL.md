@@ -5,56 +5,56 @@ description: Orchestrator for CUDA/Triton kernel optimization. Runs environment 
 
 # kernel-opt-skill
 
-## 优化流程
+## Optimization Flow
 
 ```mermaid
 flowchart TD
-    ENV["环境检查和配置"] --> ENV_Q{通过?}
-    ENV_Q -->|否| ENV_FAIL[退出：输出错误报告]
-    ENV_Q -->|是| P["Step 0: 正确性检查"] --> Q{通过?}
-    Q -->|否| R[修复 kernel 直到 correctness pass]
+    ENV["Environment Check & Config"] --> ENV_Q{Pass?}
+    ENV_Q -->|No| ENV_FAIL[Exit: output error report]
+    ENV_Q -->|Yes| P["Step 0: Correctness Check"] --> Q{Pass?}
+    Q -->|No| R[Fix kernel until correctness passes]
     R --> P
-    Q -->|是| A["Step 1: 性能指标采集"]
-    A --> A2["读取证据"]
-    A2 --> B[Step 2: 全局定位]
-    B --> C{瓶颈类型?}
-    C -->|Memory-Bound| D[Step 3a: 优化内存访问]
-    C -->|Compute-Bound| E[Step 3b: 优化计算效率]
-    C -->|Latency-Bound| F[Step 3c: 提高并行度]
-    D --> G[Step 4: 检查占用率]
+    Q -->|Yes| A["Step 1: Collect Performance Metrics"]
+    A --> A2["Read Evidence"]
+    A2 --> B[Step 2: Global Bottleneck Classification]
+    B --> C{Bottleneck type?}
+    C -->|Memory-Bound| D[Step 3a: Optimize Memory Access]
+    C -->|Compute-Bound| E[Step 3b: Optimize Compute Efficiency]
+    C -->|Latency-Bound| F[Step 3c: Increase Parallelism]
+    D --> G[Step 4: Check Occupancy]
     E --> G
     F --> G
-    G --> H[Step 5: 分析 Warp 调度]
-    H --> I[Step 6: 分析分支发散]
-    I --> I2["制定优化方向"]
-    I2 --> J["Step 7: 生成下一版 kernel & 重新采集对比"]
-    J --> K{达到最大迭代次数?}
-    K -->|否| P
-    K -->|是| L["选出 best version & 生成报告 & benchmark"]
+    G --> H[Step 5: Analyze Warp Scheduling]
+    H --> I[Step 6: Analyze Branch Divergence]
+    I --> I2["Formulate Optimization Direction"]
+    I2 --> J["Step 7: Generate Next Kernel Version & Re-collect for Comparison"]
+    J --> K{Max iterations reached?}
+    K -->|No| P
+    K -->|Yes| L["Select best version & generate report & benchmark"]
 ```
 
 ---
 
-## sub-skill 路由
+## Sub-skill Routing
 
-| sub-skill | location | 职责 |
+| Sub-skill | Location | Responsibility |
 |---|---|---|
-| env | `env/SKILL.md` | 必要环境检查（含 Triton）+ 环境配置 |
-| profiling | `profiling/SKILL.md` | 正确性检查 + NCU 采集 + 指标解读 + 瓶颈定位 |
-| benchmark | `benchmark/SKILL.md` | solution 与 reference 框架横向对比（执行时间 + 硬件指标） |
-| cuda | `cuda/SKILL.md` | CUDA 优化策略 |
-| triton | `triton/SKILL.md` | Triton 优化策略 |
-| report | `report/SKILL.md` | 生成优化流程报告 |
+| env | `env/ENV.md` | Required environment check (including Triton) + env configuration |
+| profiling | `profiling/PROFILING.md` | Correctness check + NCU collection + metric interpretation + bottleneck classification |
+| benchmark | `benchmark/BENCHMARK.md` | Lateral comparison of solution vs. reference framework (execution time + hardware metrics) |
+| cuda | `cuda/CUDA.md` | CUDA optimization strategies |
+| triton | `triton/TRITON.md` | Triton optimization strategies |
+| report | `report/REPORT.md` | Generate optimization flow report |
 
 ---
 
-## 优化循环
+## Optimization Loop
 
-**整个优化过程中的中间产物和 kernel 的迭代版本需要指定到一个目录中`<output_dir>`，如果未指定就在当前目录`<./>`**
+**All intermediate artifacts and kernel iterations are saved to `<output_dir>`. If not specified, defaults to the current directory `<./>`.**
 
-**优化循环最大迭代次数默认 `N=3`，用户可指定其他值**：
+**Default maximum iterations: `N=3`, user-configurable.**
 
-一旦指定最大迭代次数 `N`，后续迭代版本数不可更改，在 `<output_dir>` 中生成 `N+1` 个子目录分别代表不同的版本：
+Once the maximum iteration count `N` is set, it cannot be changed. `N+1` subdirectories are created under `<output_dir>`, each representing a different version:
 
 ```text
 <output_dir>/
@@ -84,49 +84,49 @@ flowchart TD
 └── benchmark.md
 ```
 
-`v0` 为初始未优化版本，`v1` 表示第一次优化，`v2` 表示第二次优化，`v3` 表示第三次优化，以此类推
+`v0` is the initial unoptimized version; `v1`, `v2`, `v3` are successive optimization iterations.
 
-### 环境检查和配置（env-skill 负责）
+### Environment Check & Configuration (env-skill)
 
-* 环境检查为必要步骤，**不通过则直接退出**并输出问题详情
-* 输出 `<output_dir>/env_check.md`，记录 CUDA/Triton kernel 优化的环境基础信息，后续所有环境信息均从此文件查询
+* Environment check is a required step — **exit immediately on failure** and output problem details.
+* Outputs `<output_dir>/env_check.md`, recording the environment baseline for CUDA/Triton kernel optimization. All subsequent environment queries use this file.
 
-### Step 0: 正确性检查（profiling-skill 负责）
+### Step 0: Correctness Check (profiling-skill)
 
-* `ref.py` 为正确性检查的参考对比（reference），通常为 PyTorch 实现
-* 输出 `<output_dir>/v{n}/correctness.md`
-* 若正确性检查不通过，需检查并修复源码
+* `ref.py` is the reference for correctness validation, typically a PyTorch implementation.
+* Outputs `<output_dir>/v{n}/correctness.md`.
+* If correctness check fails, inspect and fix the source code before proceeding.
 
-### Step 1: 性能指标采集（profiling-skill 负责）
+### Step 1: Performance Metric Collection (profiling-skill)
 
-* 输出 `<output_dir>/v{n}/ncu_summary.md` 和 `<output_dir>/v{n}/ncu_details.md`，其中记录各项指标，是后续 CUDA/Triton kernel 优化方向的依据
+* Outputs `<output_dir>/v{n}/ncu_summary.md` and `<output_dir>/v{n}/ncu_details.md`, which record all metrics and serve as the basis for subsequent CUDA/Triton optimization decisions.
 
-### Step 2: 全局定位（profiling-skill & cuda-skill 负责）
+### Step 2: Global Bottleneck Classification (profiling-skill & cuda-skill)
 
-* 根据 NCU 性能指标确定 `Memory-Bound`、`Compute-Bound` 和 `Latency-Bound` 类别，驱动 CUDA/Triton 两类实现的下一步优化方向，详见 `profiling/SKILL.md`
+* Classifies as `Memory-Bound`, `Compute-Bound`, or `Latency-Bound` based on NCU metrics, driving the next optimization direction for both CUDA and Triton implementations. See `profiling/PROFILING.md` for details.
 
-### Step 4: 检查占用率 / Step 5: 分析 Warp 调度 / Step 6: 分析分支发散（profiling-skill & cuda-skill 负责）
+### Step 4: Check Occupancy / Step 5: Analyze Warp Scheduling / Step 6: Analyze Branch Divergence (profiling-skill & cuda-skill)
 
-* 根据 NCU 采集的 `占用率`、`Warp 调度`、`分支发散` 等相关性能指标确定优化策略
+* Determines optimization strategies based on NCU-collected `occupancy`, `warp scheduling`, and `branch divergence` metrics.
 
-### Step 7: 生成下一版 kernel & 重新采集对比
+### Step 7: Generate Next Kernel Version & Re-collect for Comparison
 
-* 创建子目录`<output_dir>/v{n}`，在这个目录下生成下一版 kernel & 重新采集对比
+* Creates subdirectory `<output_dir>/v{n}`, generates the next kernel version in this directory, and re-collects metrics for comparison.
 
-### 选出 best version & 生成报告（report-skill 负责）& benchmark（benchmark-skill 负责）
+### Select Best Version & Generate Report (report-skill) & Benchmark (benchmark-skill)
 
-* **当达到最大迭代次数后，停止优化，输出`<output_dir>/final_report.md`**
-* 选取 **best version** 与 **reference implementation (PyTorch/CUTLASS)** 进行对比，输出`<output_dir>/benchmark.md`
+* **When max iterations are reached, stop optimization and output `<output_dir>/final_report.md`.**
+* Compare the **best version** against the **reference implementation (PyTorch/CUTLASS)** and output `<output_dir>/benchmark.md`.
 
 ---
 
-## 架构速查
+## Architecture Quick Reference
 
-| 特性 | CC 7.x Volta/Turing | CC 8.x Ampere | CC 9.0 Hopper |
+| Feature | CC 7.x Volta/Turing | CC 8.x Ampere | CC 9.0 Hopper |
 |---|---|---|---|
-| Tensor Core | 第1/2代 | 第3代 | 第4代（FP8） |
-| Shared Memory 上限 | 96 KB | 164 KB | 228 KB |
-| L2 缓存 | 6 MB | 40–80 MB | 50 MB |
-| `cp.async` | ✗/有限 | ✓ | ✓ + TMA |
+| Tensor Core | Gen 1/2 | Gen 3 | Gen 4 (FP8) |
+| Shared Memory limit | 96 KB | 164 KB | 228 KB |
+| L2 Cache | 6 MB | 40–80 MB | 50 MB |
+| `cp.async` | ✗/Limited | ✓ | ✓ + TMA |
 | L2 Persistence | ✗ | ✓ | ✓ |
 | Thread Block Cluster | ✗ | ✗ | ✓ |

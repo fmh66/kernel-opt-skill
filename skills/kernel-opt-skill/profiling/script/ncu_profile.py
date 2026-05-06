@@ -13,6 +13,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -159,6 +160,11 @@ METRIC_LABELS = {
 }
 
 
+def combine_metrics(x, y):
+    """Combine metrics from multiple kernels: take element-wise maximum."""
+    return np.maximum(x, y)
+
+
 # shared between parent and ncu child process
 _kernel_state = None
 
@@ -212,6 +218,7 @@ def run_profile(solution_file, backend, dim_values, ptr_size, arch,
         output_csv=False,
         clock_control="none",  # clocks locked externally by enc_config.py
         cache_control="all",
+        combine_kernel_metrics=combine_metrics,
     )
     def profile_solve(warmup_count):
         state = _get_kernel_state(solution_file, backend, dim_values, ptr_size, arch, seed)
